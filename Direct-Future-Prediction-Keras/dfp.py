@@ -100,7 +100,7 @@ class DFPAgent:
             f = self.model.predict([state, measurement, goal]) # [1x6, 1x6, 1x6]
             f_pred = np.vstack(f) # 3x6
             obj = np.sum(np.multiply(f_pred, inference_goal), axis=1) # num_action
-
+            #KOE: Double-check the NN output a bit.
             action_idx = np.argmax(obj)
         return action_idx
 
@@ -179,6 +179,7 @@ if __name__ == "__main__":
 
     #Setting up the env
     #TODO Worker_id can be changed to run in parallell
+    #Flatten_branched gives us a onehot encoding of all 54 action combinations.
     env = UnityEnv("../unity_envs/kais_banana", worker_id=0, use_visual=True, uint8_visual=True, flatten_branched=True)
     '''game = DoomGame()
     game.load_config("../../scenarios/health_gathering.cfg")
@@ -199,6 +200,7 @@ if __name__ == "__main__":
     prev_misc = misc
 
     # game.get_available_buttons_size() # [Turn Left, Turn Right, Move Forward]
+
     action_size = env.action_space.n
     print("Env has ", action_size, " actions.")
     measurement_size = 3 # [Battery, posion, food]
@@ -218,7 +220,7 @@ if __name__ == "__main__":
     x_t = preprocessImg(initial_observation, size=(img_rows, img_cols))
     #KOE: Preprocessing to get black and white.
 
-    #KOE: Not sure what is going on here.
+    #KOE: Not sure what is going on here. 4 images in a row?
     s_t = np.stack(([x_t]*4), axis=2) # It becomes 64x64x4
     s_t = np.expand_dims(s_t, axis=0) # 1x64x64x4
 
@@ -246,72 +248,97 @@ if __name__ == "__main__":
     #is_terminated = game.is_episode_finished()
     done = False
 
-    #KOETODO: Got to here. Continue later.
     # Start training
     epsilon = agent.initial_epsilon
     GAME = 0
     t = 0
-    max_life = 0 # Maximum episode life (Proxy for agent performance) #KOE: Remove?
-    life = 0
+    max_reward = 0 # Maximum episode life (Proxy for agent performance) #KOE: Remove?
+    #life = 0
 
     # Buffer to compute rolling statistics 
-    life_buffer = []
+    reward_buffer = []
 
-    while not game.is_episode_finished():
+    while not done:
 
         loss = 0
         r_t = 0
         a_t = np.zeros([action_size])
 
         # Epsilon Greedy
-        action_idx  = agent.get_action(s_t, m_t, goal, inference_goal)
-        a_t[action_idx] = 1
+        action_idx  = agent.get_action(s_t, m_t, goal, inference_goal) #KOE: This is the forward pass through the NN.
 
-        a_t = a_t.astype(int)
+        '''
+        KOE: Here, we take the action, observe rewards, done and skip ahead.
         game.set_action(a_t.tolist())
         skiprate = agent.frame_per_action
-        game.advance_action(skiprate)
+        game.advance_action(skiprate) #Repeats the action skiprate times and returns state after that.
 
         game_state = game.get_state()  # Observe again after we take the action
         is_terminated = game.is_episode_finished()
 
         r_t = game.get_last_reward() 
+        '''
 
-        if (is_terminated):
-            if (life > max_life):
-                max_life = life
+        #The vector space in Unity has 4 branches, with multiple actions i each! Those can also be combined!
+        #I need the ANN output to be able to select all combinations.
+        #TODO Believe step just wants the index of the action.
+        print("Taking action ", action_idx)
+        observation, reward, done, info = env.step(action_idx)
+        print("Got reward: ", reward)
+        #TODO How to step ahead multiple steps? - I asked github- check what they suggest.
+
+        #Observation is the image. vector_observations are the measurements.
+        #battery, eaten_poison, eaten_food
+        meas = info['brain_info'].vector_observations
+        if (done):
+            if ((food-poison) > max_reward):
+                max_reward = (food-poison)
             GAME += 1
-            life_buffer.append(life)
+            reward_buffer.append(food-poison)
             print ("Episode Finish ")
-            game.new_episode()
-            game_state = game.get_state()
-            misc = game_state.game_variables
-            x_t1 = game_state.screen_buffer
+            #game.new_episode()
+            misc = 100 #KOE: Not sure what's the point of this. Maybe remove?
+            #misc = game_state.game_variables
+            #x_t1 = game_state.screen_buffer
+            #reset returns the initial scren buffer.
+            x_t1 = env.reset()
+        else:
+            x_t1 = observation
+            misc = meas[0]
 
-        x_t1 = game_state.screen_buffer
-        misc = game_state.game_variables
-
+        #Img to black/white
         x_t1 = preprocessImg(x_t1, size=(img_rows, img_cols))
         x_t1 = np.reshape(x_t1, (1, img_rows, img_cols, 1))
-        s_t1 = np.append(x_t1, s_t[:, :, :, :3], axis=3)
+        s_t1 = np.append(x_t1, s_t[:, :, :, :3], axis=3) #KOE: What is this? Some sequence of images?
 
-        if (prev_misc[0] - misc[0] > 8): # Pick up Poison
+
+        #KOETODO: Need to think about if I should give the banana signal only exactly when picking, or
+        #also a few seconds after (as I do now).
+
+
+        #TODO: Meas will now have accumulated foods/poisons. I could also give them as 0/1. Not sure
+        #what is best. Original code gave accumulated values, but it shouldn't matter since the DIFF
+        #is what is used in predictions.
+        if (reward==-1): # Pick up Poison
             poison += 1
-        if (misc[0] > prev_misc[0]): # Pick up Health Pack
-            medkit += 1
+        if (reward==1): # Pick up food
+            food += 1
 
-        if (is_terminated):
+        #KOE: Remove?
+        '''if (done):
             life = 0
         else:
-            life += 1
+            life += 1'''
 
         # Update the cache
         prev_misc = misc
 
+        #KOETODO: Storing here m_t, but we want to predict m_t+1. How is that trained?
         # save the sample <s, a, r, s'> to the replay memory and decrease epsilon
-        agent.replay_memory(s_t, action_idx, r_t, s_t1, m_t, is_terminated)
+        agent.replay_memory(s_t, action_idx, r_t, s_t1, m_t, done)
 
-        m_t = np.array([misc[0]/30.0, medkit/10.0, poison]) # Measurement after transition
+        #KOETODO: Think about normalization.
+        m_t = np.array([meas[0]/100.0, food, poison]) # Measurement after transition
 
         # Do the training
         if t > agent.observe and t % agent.timestep_per_train == 0:
@@ -334,27 +361,28 @@ if __name__ == "__main__":
         else:
             state = "train"
 
-        if (is_terminated):
+        if (done):
             print("TIME", t, "/ GAME", GAME, "/ STATE", state, \
                   "/ EPSILON", agent.epsilon, "/ ACTION", action_idx, "/ REWARD", r_t, \
-                  "/ Medkit", medkit, "/ Poison", poison, "/ LIFE", max_life, "/ LOSS", loss)
+                  "/ Food", food, "/ Poison", poison, "/ LOSS", loss)
 
-            medkit = 0
+            food = 0
             poison = 0
 
             # Save Agent's Performance Statistics
             if GAME % agent.stats_window_size == 0 and t > agent.observe: 
                 print("Update Rolling Statistics")
-                agent.mavg_score.append(np.mean(np.array(life_buffer)))
-                agent.var_score.append(np.var(np.array(life_buffer)))
+                agent.mavg_score.append(np.mean(np.array(reward_buffer)))
+                agent.var_score.append(np.var(np.array(reward_buffer)))
 
                 # Reset rolling stats buffer
-                life_buffer = []
+                reward_buffer = []
 
                 # Write Rolling Statistics to file
                 with open("statistics/dfp_stats.txt", "w") as stats_file:
                     stats_file.write('Game: ' + str(GAME) + '\n')
-                    stats_file.write('Max Score: ' + str(max_life) + '\n')
+                    stats_file.write('Max Score: ' + str(max_reward) + '\n')
                     stats_file.write('mavg_score: ' + str(agent.mavg_score) + '\n')
                     stats_file.write('var_score: ' + str(agent.var_score) + '\n')
 
+#KOE: Made it to the end. Now test running, print out, debug, etc.
