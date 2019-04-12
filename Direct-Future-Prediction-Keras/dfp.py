@@ -296,7 +296,7 @@ if __name__ == "__main__":
     loss_buffer = []
 
     #TODO Maybe set up some adaptive number of training episodes?
-    timesteps_per_game = 300
+    timesteps_per_game = 300 #KOE: I double checked that there are in fact exactly 300 steps per episode.
     total_training_timesteps = timesteps_per_game*2000
 
     with open("statistics_both_goals/dfp_stats.txt", "a+") as stats_file:
