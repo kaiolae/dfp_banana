@@ -1,9 +1,7 @@
 #!/usr/bin/env python
 from __future__ import print_function
 
-import skimage as skimage
-from skimage import transform, color, exposure
-from skimage.viewer import ImageViewer
+import skimage
 import random
 from random import choice
 import numpy as np
@@ -16,7 +14,7 @@ import json
 from keras.models import model_from_json
 from keras.models import Sequential, load_model, Model
 from keras.layers.core import Dense, Dropout, Activation, Flatten
-from keras.layers import Convolution2D, Dense, Flatten, merge, MaxPooling2D, Input, AveragePooling2D, Lambda, Merge, Activation, Embedding
+from keras.layers import Convolution2D, Dense, Flatten, merge, MaxPooling2D, Input, AveragePooling2D, Lambda, Activation, Embedding
 from keras.optimizers import SGD, Adam, rmsprop
 from keras import backend as K
 
@@ -25,12 +23,14 @@ from time import sleep
 import tensorflow as tf
 
 from networks import Networks
+import pandas as pd
 
 #KOE: making my edits directly here. The original one is still in dfp_original.py
 def preprocessImg(img, size):
 
-    img = np.rollaxis(img, 0, 3)    # It becomes (640, 480, 3)
-    img = skimage.transform.resize(img,size)
+    #KOE: I think my Unity pictures are alreay the right shape - no need to do this reshaping.
+    #img = np.rollaxis(img, 0, 3)    # It becomes (640, 480, 3)
+    #img = skimage.transform.resize(img,size)
     img = skimage.color.rgb2gray(img)
 
     return img
@@ -64,16 +64,20 @@ class DFPAgent:
         # these is hyper parameters for the DFP
         self.gamma = 0.99
         self.learning_rate = 0.00001
+
+        #Epsilon-greedy with chance of random action decreasing gradually.
+        #Currently, it seems to be halved around game 100 (50% chance of random), and zero around game
+        #200 (full exploit).
         self.epsilon = 1.0
         self.initial_epsilon = 1.0
         self.final_epsilon = 0.0001
-        self.batch_size = 32
-        self.observe = 2000
+        self.batch_size = 32 # KOE: Increased from 32 to 256 to see if I can utilize gpu more. No effect.
+        self.observe = 2000 #TODO 2000
         self.explore = 50000 
         self.frame_per_action = 4
         #KOETODO: If this means how much to observe btw each train, then this model seems very
         #inefficient?
-        self.timestep_per_train = 5 # Number of timesteps between training interval
+        self.timestep_per_train = 5 #KOE: Increased from 5 to see if I can improve GPU utilization # Number of timesteps between training interval
 
         # experience replay buffer
         self.memory = deque()
@@ -83,7 +87,7 @@ class DFPAgent:
         self.model = None
 
         # Performance Statistics
-        self.stats_window_size= 50 # window size for computing rolling statistics
+        self.stats_window_size= 10 # window size for computing rolling statistics
         self.mavg_score = [] # Moving Average of Survival Time
         self.var_score = [] # Variance of Survival Time
 
@@ -114,6 +118,7 @@ class DFPAgent:
             self.memory.popleft()
 
     # Pick samples randomly from replay memory (with batch_size)
+    #KOETODO: Could it be a problem that the rewards are much sparser than the energy-feedback?
     def train_minibatch_replay(self, goal):
         """
         Train on a single minibatch
@@ -127,6 +132,9 @@ class DFPAgent:
         f_action_target = np.zeros((batch_size, (self.measurement_size * len(self.timesteps)))) 
         action = []
 
+        #KOE: Doing some checks on how sparse the measurements-streams are.
+        futures_with_no_meas_change = 0
+        futures_with_meas_change = 0
         for i, idx in enumerate(rand_indices):
             future_measurements = []
             last_offset = 0
@@ -139,21 +147,44 @@ class DFPAgent:
                             last_offset = j
                         else:
                             future_measurements += list( (self.memory[idx+last_offset][4] - self.memory[idx][4]) )
+                        if future_measurements[-1]!=0 or future_measurements[-2] != 0:
+                            futures_with_meas_change += 1
+                        else:
+                            futures_with_no_meas_change +=1
                 else:
                     done = True
                     if j in self.timesteps: # 1,2,4,8,16,32
                         future_measurements += list( (self.memory[idx+last_offset][4] - self.memory[idx][4]) )
-            f_action_target[i,:] = np.array(future_measurements)
+            #print("Target array shape: ", f_action_target.shape)
+            #print("Future meas is ", future_measurements)
+            #print("Input array shape: ", np.array(future_measurements).shape)
+            f_action_target[i,:] = np.array(future_measurements) #TODO: KOE modified due to error
             state_input[i,:,:,:] = self.memory[idx][0]
             measurement_input[i,:] = self.memory[idx][4]
             action.append(self.memory[idx][1])
 
+        #KOETODO: Why is this running in parallell with agent simulations??
+        #print("Done creating training vector. Futures without meas change: ", futures_with_no_meas_change, " and with: ", futures_with_meas_change)
         f_target = self.model.predict([state_input, measurement_input, goal_input]) # Shape [32x18,32x18,32x18]
 
         for i in range(self.batch_size):
             f_target[action[i]][i,:] = f_action_target[i]
 
+        #print("Training on batch")
+        #KOETODO: What is in the loss? Seems it may have 1 value per action?
+        #KOETODO: Storing the history of inputs/outputs to check that it is sensible.
+
+        #print("Dumping Input/output pair to file in input_output_examples/")
+        #np.save("input_output_examples/state_input", state_input)
+        #np.save("input_output_examples/meaurement_input", measurement_input)
+        #np.save("input_output_examples/goal_input", goal_input)
+        #np.save("input_output_examples/f_target", f_target)
+
+
+        #KOETODO: Seems the target here is a value I have already predicted. Strange...
         loss = self.model.train_on_batch([state_input, measurement_input, goal_input], f_target)
+        #print("Model is ", self.model)
+        #print("Loss was ", loss)
 
         return loss
 
@@ -180,14 +211,10 @@ if __name__ == "__main__":
     #Setting up the env
     #TODO Worker_id can be changed to run in parallell
     #Flatten_branched gives us a onehot encoding of all 54 action combinations.
-    env = UnityEnv("../unity_envs/kais_banana", worker_id=0, use_visual=True, uint8_visual=True, flatten_branched=True)
-    '''game = DoomGame()
-    game.load_config("../../scenarios/health_gathering.cfg")
-    game.set_sound_enabled(True)
-    game.set_screen_resolution(ScreenResolution.RES_640X480)
-    game.set_window_visible(False)
-    game.init()'''
+    print("Opening unity env")
+    env = UnityEnv("../unity_envs/kais_banana", worker_id=13, use_visual=True, uint8_visual=True, flatten_branched=True)
 
+    print("Resetting env")
     initial_observation = env.reset()
     #KOETODO This would have to be manually configured for each environment.
     #KOE: What is this misc??
@@ -209,7 +236,9 @@ if __name__ == "__main__":
 
     img_rows , img_cols = 84, 84 #KOE: Think this is still correct.
     # Convert image into Black and white
-    img_channels = 3 # KOE: Think this is correct.
+
+    #KOETODO Not quite sure what happens here - I'm making images black/white, so what is the point?
+    img_channels = 4 # KOE: If I want to change this, I have to also edit the frame stacking when forming s_t
 
     state_size = (img_rows, img_cols, img_channels)
     agent = DFPAgent(state_size, measurement_size, action_size, timesteps)
@@ -218,12 +247,16 @@ if __name__ == "__main__":
 
     #x_t = game_state.screen_buffer # 480 x 640
     x_t = preprocessImg(initial_observation, size=(img_rows, img_cols))
+
+    #np.save("input_output_examples/initial_obs.npy", initial_observation)
+    #np.save("input_output_examples/preprocessed_obs.npy", x_t)
     #KOE: Preprocessing to get black and white.
 
     #KOE: Not sure what is going on here. 4 images in a row?
     s_t = np.stack(([x_t]*4), axis=2) # It becomes 64x64x4
     s_t = np.expand_dims(s_t, axis=0) # 1x64x64x4
 
+    #np.save("input_output_examples/stacked_obs.npy", s_t)
     # Number of food pickup as measurement
     food = 0
 
@@ -237,7 +270,9 @@ if __name__ == "__main__":
 
     # Goal
     # KOE: Battery, poison, food. No way to affect battery so far except standing still. Maybe that will happen?
-    goal = np.array([0.5, -1.0, 1.0] * len(timesteps))
+    #KOETODO: Rewarding both food and poison as an initial test. If that works, but the other not,
+    #maybe the color vision is a problem?
+    goal = np.array([0.0, 1.0, -1.0] * len(timesteps))
 
     #TODOKOE: Need to implement randomized goals.
     #KOE: Now we're talking! This is the one to allow evolving goals!
@@ -251,14 +286,29 @@ if __name__ == "__main__":
     # Start training
     epsilon = agent.initial_epsilon
     GAME = 0
-    t = 0
     max_reward = 0 # Maximum episode life (Proxy for agent performance) #KOE: Remove?
     #life = 0
 
     # Buffer to compute rolling statistics 
     reward_buffer = []
+    food_buffer = []
+    poison_buffer = []
+    loss_buffer = []
 
-    while not done:
+    #TODO Maybe set up some adaptive number of training episodes?
+    timesteps_per_game = 300
+    total_training_timesteps = timesteps_per_game*2000
+
+    with open("statistics_both_goals/dfp_stats.txt", "a+") as stats_file:
+        stats_file.write('GAME_NUMBER ')
+        stats_file.write('Max_Score ')
+        stats_file.write('mavg_score ')
+        stats_file.write('mavg_loss ')
+        stats_file.write('var_score ')
+        stats_file.write('mavg_food ')
+        stats_file.write('mavg_poison \n')
+
+    for t in range(total_training_timesteps):
 
         loss = 0
         r_t = 0
@@ -282,19 +332,24 @@ if __name__ == "__main__":
         #The vector space in Unity has 4 branches, with multiple actions i each! Those can also be combined!
         #I need the ANN output to be able to select all combinations.
         #TODO Believe step just wants the index of the action.
-        print("Taking action ", action_idx)
+
         observation, reward, done, info = env.step(action_idx)
-        print("Got reward: ", reward)
+        if reward!=0:
+            print("Got reward: ", reward)
+            print("Taking action ", action_idx)
         #TODO How to step ahead multiple steps? - I asked github- check what they suggest.
 
         #Observation is the image. vector_observations are the measurements.
         #battery, eaten_poison, eaten_food
         meas = info['brain_info'].vector_observations
         if (done):
+            print("Game done at timestep ", t)
             if ((food-poison) > max_reward):
                 max_reward = (food-poison)
             GAME += 1
             reward_buffer.append(food-poison)
+            food_buffer.append(food)
+            poison_buffer.append(poison)
             print ("Episode Finish ")
             #game.new_episode()
             misc = 100 #KOE: Not sure what's the point of this. Maybe remove?
@@ -304,7 +359,7 @@ if __name__ == "__main__":
             x_t1 = env.reset()
         else:
             x_t1 = observation
-            misc = meas[0]
+            misc = meas[0][0]
 
         #Img to black/white
         x_t1 = preprocessImg(x_t1, size=(img_rows, img_cols))
@@ -321,8 +376,10 @@ if __name__ == "__main__":
         #is what is used in predictions.
         if (reward==-1): # Pick up Poison
             poison += 1
+            print("Picked up. Current poison is ", poison)
         if (reward==1): # Pick up food
             food += 1
+            print("Picked up. Current food is ", food)
 
         #KOE: Remove?
         '''if (done):
@@ -335,22 +392,27 @@ if __name__ == "__main__":
 
         #KOETODO: Storing here m_t, but we want to predict m_t+1. How is that trained?
         # save the sample <s, a, r, s'> to the replay memory and decrease epsilon
+        #KOE: This seems to be handled by future_measurements in the training code.
+
+        #print("Storing into memory. s_t is ", s_t.shape)
+        #TODO: Analyze a bit what s_t is, is it 4 images in a row??
         agent.replay_memory(s_t, action_idx, r_t, s_t1, m_t, done)
 
         #KOETODO: Think about normalization.
-        m_t = np.array([meas[0]/100.0, food, poison]) # Measurement after transition
+        m_t = np.array([meas[0][0]/100.0, food, poison]) # Measurement after transition
 
         # Do the training
         if t > agent.observe and t % agent.timestep_per_train == 0:
             loss = agent.train_minibatch_replay(goal)
+            #print("Loss size ", len(loss))
+            loss_buffer.append(np.mean(np.array(loss))) # Loss has 1 element for each action (?)
             
         s_t = s_t1
-        t += 1
 
         # save progress every 10000 iterations
         if t % 10000 == 0:
             print("Now we save model")
-            agent.model.save_weights("models/dfp.h5", overwrite=True)
+            agent.model.save_weights("statistics_both_goals/model/dfp.h5", overwrite=True)
 
         # print info
         state = ""
@@ -362,27 +424,42 @@ if __name__ == "__main__":
             state = "train"
 
         if (done):
-            print("TIME", t, "/ GAME", GAME, "/ STATE", state, \
-                  "/ EPSILON", agent.epsilon, "/ ACTION", action_idx, "/ REWARD", r_t, \
-                  "/ Food", food, "/ Poison", poison, "/ LOSS", loss)
-
+            #print("DONE: loss size", len(loss) )
+            if len(loss_buffer) >= 1:
+                print("TIME", t, "/ GAME", GAME, "/ STATE", state, "/ EPSILON", agent.epsilon, \
+                      "/ Food", food, "/ Poison", poison, "/ LOSS", loss_buffer[-1])
+            # "/ ACTION", action_idx, "/ REWARD", r_t, \ KOE: Don't see point in printing CURRENT action and reward.
             food = 0
             poison = 0
 
             # Save Agent's Performance Statistics
+            #TODO Could consider simplifying and just saving after every game.
             if GAME % agent.stats_window_size == 0 and t > agent.observe: 
                 print("Update Rolling Statistics")
                 agent.mavg_score.append(np.mean(np.array(reward_buffer)))
                 agent.var_score.append(np.var(np.array(reward_buffer)))
+                #KOETODO: I think I can remove these. storing straight to file instead.
 
-                # Reset rolling stats buffer
+                mavg_score = np.mean(np.array(reward_buffer))
+                var_score = np.var(np.array(reward_buffer))
+                mavg_food = np.mean(np.array(food_buffer))
+                mavg_poison = np.mean(np.array(poison_buffer))
+                mavg_loss = np.mean(loss_buffer)
+                food_buffer = []
+                poison_buffer = []
                 reward_buffer = []
+                loss_buffer = []
 
                 # Write Rolling Statistics to file
-                with open("statistics/dfp_stats.txt", "w") as stats_file:
-                    stats_file.write('Game: ' + str(GAME) + '\n')
-                    stats_file.write('Max Score: ' + str(max_reward) + '\n')
-                    stats_file.write('mavg_score: ' + str(agent.mavg_score) + '\n')
-                    stats_file.write('var_score: ' + str(agent.var_score) + '\n')
+                with open("statistics_both_goals/dfp_stats.txt", "a+") as stats_file:
+                    stats_file.write(str(GAME) + " ")
+                    stats_file.write(str(max_reward) + " ")
+                    stats_file.write(str(mavg_score) + ' ')
+                    stats_file.write(str(mavg_loss) + ' ')
+                    stats_file.write(str(var_score) + ' ')
+                    stats_file.write(str(mavg_food) + ' ')
+                    stats_file.write(str(mavg_poison) + '\n')
+
+    env.close()
 
 #KOE: Made it to the end. Now test running, print out, debug, etc.
