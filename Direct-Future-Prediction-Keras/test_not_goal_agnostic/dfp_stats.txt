@@ -1,0 +1,3 @@
+GAME_NUMBER Max_Score mavg_score mavg_loss var_score mavg_food mavg_poison 
+GAME_NUMBER Max_Score mavg_score mavg_loss var_score mavg_food mavg_poison 
+GAME_NUMBER Max_Score mavg_score mavg_loss var_score mavg_food mavg_poison 

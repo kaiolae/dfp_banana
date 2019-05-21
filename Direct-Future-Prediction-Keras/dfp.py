@@ -7,6 +7,7 @@ from random import choice
 import numpy as np
 from collections import deque
 import time
+import os
 
 from gym_unity.envs.unity_env import UnityEnv
 
@@ -108,6 +109,18 @@ class DFPAgent:
             action_idx = np.argmax(obj)
         return action_idx
 
+    def get_predicted_effects(self, state, measurement, goal):
+        """
+        Like get_action, but stops before calculating the action, returning the predicted effects instead.
+        """
+
+        measurement = np.expand_dims(measurement, axis=0)
+        goal = np.expand_dims(goal, axis=0)
+        f = self.model.predict([state, measurement, goal]) # [1x6, 1x6, 1x6]
+        f_pred = np.vstack(f) # 3x6
+        return f_pred
+
+
     # Save trajectory sample <s,a,r,s'> to the replay memory
     def replay_memory(self, s_t, action_idx, r_t, s_t1, m_t, is_terminated):
         self.memory.append((s_t, action_idx, r_t, s_t1, m_t, is_terminated))
@@ -200,6 +213,7 @@ class DFPAgent:
 if __name__ == "__main__":
 
 
+    start=time.time()
     mask_unused_gpus()
 
     # Avoid Tensorflow eats up GPU memory
@@ -212,7 +226,7 @@ if __name__ == "__main__":
     #TODO Worker_id can be changed to run in parallell
     #Flatten_branched gives us a onehot encoding of all 54 action combinations.
     print("Opening unity env")
-    env = UnityEnv("../unity_envs/kais_banana", worker_id=13, use_visual=True, uint8_visual=True, flatten_branched=True)
+    env = UnityEnv("../unity_envs/kais_banana2", worker_id=16, use_visual=True, uint8_visual=True, flatten_branched=True)
 
     print("Resetting env")
     initial_observation = env.reset()
@@ -227,7 +241,7 @@ if __name__ == "__main__":
     prev_misc = misc
 
     # game.get_available_buttons_size() # [Turn Left, Turn Right, Move Forward]
-
+    print("Action space is: ", env.action_space)
     action_size = env.action_space.n
     print("Env has ", action_size, " actions.")
     measurement_size = 3 # [Battery, posion, food]
@@ -273,6 +287,10 @@ if __name__ == "__main__":
     #KOETODO: Rewarding both food and poison as an initial test. If that works, but the other not,
     #maybe the color vision is a problem?
     goal = np.array([0.0, 1.0, -1.0] * len(timesteps))
+    SAVE_TO_FOLDER = "statistics_both_goals_without_laser_4000_episodes"
+    if not os.path.exists(SAVE_TO_FOLDER):
+        os.makedirs(SAVE_TO_FOLDER)
+        os.makedirs(SAVE_TO_FOLDER+"/model")
 
     #TODOKOE: Need to implement randomized goals.
     #KOE: Now we're talking! This is the one to allow evolving goals!
@@ -297,9 +315,9 @@ if __name__ == "__main__":
 
     #TODO Maybe set up some adaptive number of training episodes?
     timesteps_per_game = 300 #KOE: I double checked that there are in fact exactly 300 steps per episode.
-    total_training_timesteps = timesteps_per_game*2000
+    total_training_timesteps = timesteps_per_game*4000
 
-    with open("statistics_both_goals/dfp_stats.txt", "a+") as stats_file:
+    with open(SAVE_TO_FOLDER+"/dfp_stats.txt", "a+") as stats_file:
         stats_file.write('GAME_NUMBER ')
         stats_file.write('Max_Score ')
         stats_file.write('mavg_score ')
@@ -328,7 +346,7 @@ if __name__ == "__main__":
 
         r_t = game.get_last_reward() 
         '''
-
+        #KOEComment: My unity agent also skips 5 frames between actions, controlled in the Unity interface.
         #The vector space in Unity has 4 branches, with multiple actions i each! Those can also be combined!
         #I need the ANN output to be able to select all combinations.
         #TODO Believe step just wants the index of the action.
@@ -412,7 +430,7 @@ if __name__ == "__main__":
         # save progress every 10000 iterations
         if t % 10000 == 0:
             print("Now we save model")
-            agent.model.save_weights("statistics_both_goals/model/dfp.h5", overwrite=True)
+            agent.model.save_weights(SAVE_TO_FOLDER+"/model/dfp.h5", overwrite=True)
 
         # print info
         state = ""
@@ -451,7 +469,7 @@ if __name__ == "__main__":
                 loss_buffer = []
 
                 # Write Rolling Statistics to file
-                with open("statistics_both_goals/dfp_stats.txt", "a+") as stats_file:
+                with open(SAVE_TO_FOLDER+"/dfp_stats.txt", "a+") as stats_file:
                     stats_file.write(str(GAME) + " ")
                     stats_file.write(str(max_reward) + " ")
                     stats_file.write(str(mavg_score) + ' ')
@@ -461,5 +479,10 @@ if __name__ == "__main__":
                     stats_file.write(str(mavg_poison) + '\n')
 
     env.close()
+    end=time.time()
+    time_elapsed = end-start
+    with open(SAVE_TO_FOLDER+"/timing_info.txt", "w") as text_file:
+        print("Time Elapsed: {}".format(time_elapsed), file=text_file)
+
 
 #KOE: Made it to the end. Now test running, print out, debug, etc.

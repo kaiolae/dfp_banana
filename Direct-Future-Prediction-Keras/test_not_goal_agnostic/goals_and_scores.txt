@@ -1,0 +1,2 @@
+GAME_NUMBER food_goal poison_goal foods_gathered poisons_gathered 
+ 1 

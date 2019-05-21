@@ -102,3 +102,8 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# Folders
+myvenv/
+# I think ml-agents should be ignored, maybe I can keep all my code external to that?
+ml-agents/
