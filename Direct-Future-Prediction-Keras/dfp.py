@@ -26,6 +26,9 @@ import tensorflow as tf
 from networks import Networks
 import pandas as pd
 
+from helper_code import total_size
+
+#KOE: Get rid of image preprocessing and stacking.. Deepq works fine without it.
 #KOE: making my edits directly here. The original one is still in dfp_original.py
 def preprocessImg(img, size):
 
@@ -64,7 +67,7 @@ class DFPAgent:
 
         # these is hyper parameters for the DFP
         self.gamma = 0.99
-        self.learning_rate = 0.00001
+        self.learning_rate = 0.00001 #KOE: Original value 0.00001. Trying ten times less after problems may 2019
 
         #Epsilon-greedy with chance of random action decreasing gradually.
         #Currently, it seems to be halved around game 100 (50% chance of random), and zero around game
@@ -73,16 +76,18 @@ class DFPAgent:
         self.initial_epsilon = 1.0
         self.final_epsilon = 0.0001
         self.batch_size = 32 # KOE: Increased from 32 to 256 to see if I can utilize gpu more. No effect.
-        self.observe = 2000 #TODO 2000
+        self.observe = 400#2000 #TODO 2000
         self.explore = 50000 
         self.frame_per_action = 4
         #KOETODO: If this means how much to observe btw each train, then this model seems very
         #inefficient?
+        #KOE: Note: The standard q-learning in openaiGym uses value 1 here: Train every step!
+        #However, the one I'm using has set that parameter to 5.
         self.timestep_per_train = 5 #KOE: Increased from 5 to see if I can improve GPU utilization # Number of timesteps between training interval
 
         # experience replay buffer
         self.memory = deque()
-        self.max_memory = 20000
+        self.max_memory = 50000 #was 20000 #NOTE: My deepq implementation has 50000.
 
         # create model
         self.model = None
@@ -91,6 +96,20 @@ class DFPAgent:
         self.stats_window_size= 10 # window size for computing rolling statistics
         self.mavg_score = [] # Moving Average of Survival Time
         self.var_score = [] # Variance of Survival Time
+
+        self.next_mem_id = 0
+
+    def get_predicted_effects(self, state, measurement, goal):
+        """
+        Like get_action, but stops before calculating the action, returning the predicted effects instead.
+        """
+
+        measurement = np.expand_dims(measurement, axis=0)
+        goal = np.expand_dims(goal, axis=0)
+        f = self.model.predict([state, measurement, goal]) # [1x6, 1x6, 1x6]
+        f_pred = np.vstack(f) # 3x6
+        return f_pred
+
 
     def get_action(self, state, measurement, goal, inference_goal):
         """
@@ -109,18 +128,6 @@ class DFPAgent:
             action_idx = np.argmax(obj)
         return action_idx
 
-    def get_predicted_effects(self, state, measurement, goal):
-        """
-        Like get_action, but stops before calculating the action, returning the predicted effects instead.
-        """
-
-        measurement = np.expand_dims(measurement, axis=0)
-        goal = np.expand_dims(goal, axis=0)
-        f = self.model.predict([state, measurement, goal]) # [1x6, 1x6, 1x6]
-        f_pred = np.vstack(f) # 3x6
-        return f_pred
-
-
     # Save trajectory sample <s,a,r,s'> to the replay memory
     def replay_memory(self, s_t, action_idx, r_t, s_t1, m_t, is_terminated):
         self.memory.append((s_t, action_idx, r_t, s_t1, m_t, is_terminated))
@@ -129,6 +136,11 @@ class DFPAgent:
 
         if len(self.memory) > self.max_memory:
             self.memory.popleft()
+
+        #print("_____________SIZE OF AN ELEM IN BUFFER: ___________________", total_size(self.memory[-1]))
+        #print("_____________SIZE OF ENTIRE BUFFER: ___________________", total_size(self.memory))
+
+
 
     # Pick samples randomly from replay memory (with batch_size)
     #KOETODO: Could it be a problem that the rewards are much sparser than the energy-feedback?
@@ -196,6 +208,13 @@ class DFPAgent:
 
         #KOETODO: Seems the target here is a value I have already predicted. Strange...
         loss = self.model.train_on_batch([state_input, measurement_input, goal_input], f_target)
+
+        #Storing training images for testing. TODO: Remove.
+        if not os.path.exists('images_for_testing.out.npy'):
+            np.save('images_for_testing.out', state_input)
+            print("STORED TRAINING IMAGES TO NUMPY")
+
+
         #print("Model is ", self.model)
         #print("Loss was ", loss)
 
@@ -226,7 +245,7 @@ if __name__ == "__main__":
     #TODO Worker_id can be changed to run in parallell
     #Flatten_branched gives us a onehot encoding of all 54 action combinations.
     print("Opening unity env")
-    env = UnityEnv("../unity_envs/kais_banana2", worker_id=16, use_visual=True, uint8_visual=True, flatten_branched=True)
+    env = UnityEnv("../unity_envs/kais_banana2", worker_id=44, use_visual=True,  flatten_branched=True) #KOE: Note: If I accept images as uint8_visual=True, I have to convert to float later.
 
     print("Resetting env")
     initial_observation = env.reset()
@@ -245,14 +264,14 @@ if __name__ == "__main__":
     action_size = env.action_space.n
     print("Env has ", action_size, " actions.")
     measurement_size = 3 # [Battery, posion, food]
-    timesteps = [1,2,4,8,16,32]
+    timesteps = [1,2,4,8,16,32] # For long horizon: [4,8,16,32,64,128]
     goal_size = measurement_size * len(timesteps)
 
     img_rows , img_cols = 84, 84 #KOE: Think this is still correct.
     # Convert image into Black and white
 
     #KOETODO Not quite sure what happens here - I'm making images black/white, so what is the point?
-    img_channels = 4 # KOE: If I want to change this, I have to also edit the frame stacking when forming s_t
+    img_channels = 3 # KOE: If I want to change this, I have to also edit the frame stacking when forming s_t
 
     state_size = (img_rows, img_cols, img_channels)
     agent = DFPAgent(state_size, measurement_size, action_size, timesteps)
@@ -260,14 +279,15 @@ if __name__ == "__main__":
     agent.model = Networks.dfp_network(state_size, measurement_size, goal_size, action_size, len(timesteps), agent.learning_rate)
 
     #x_t = game_state.screen_buffer # 480 x 640
-    x_t = preprocessImg(initial_observation, size=(img_rows, img_cols))
+    #x_t = preprocessImg(initial_observation, size=(img_rows, img_cols))
 
     #np.save("input_output_examples/initial_obs.npy", initial_observation)
     #np.save("input_output_examples/preprocessed_obs.npy", x_t)
     #KOE: Preprocessing to get black and white.
 
     #KOE: Not sure what is going on here. 4 images in a row?
-    s_t = np.stack(([x_t]*4), axis=2) # It becomes 64x64x4
+    #s_t = np.stack(([x_t]*4), axis=2) # It becomes 64x64x4
+    s_t = initial_observation
     s_t = np.expand_dims(s_t, axis=0) # 1x64x64x4
 
     #np.save("input_output_examples/stacked_obs.npy", s_t)
@@ -280,14 +300,14 @@ if __name__ == "__main__":
     # Initial normalized measurements.
     #KOE: Not sure if I need to normalize...
     #KOE: Original paper normalized by stddev of the value under random exploration.
-    m_t = np.array([misc/100.0, food, poison])
+    m_t = np.array([misc/100.0, poison, food])
 
     # Goal
     # KOE: Battery, poison, food. No way to affect battery so far except standing still. Maybe that will happen?
     #KOETODO: Rewarding both food and poison as an initial test. If that works, but the other not,
     #maybe the color vision is a problem?
-    goal = np.array([0.0, 1.0, -1.0] * len(timesteps))
-    SAVE_TO_FOLDER = "statistics_both_goals_without_laser_4000_episodes"
+    goal = np.array([0.0, -1.0, 1.0] * len(timesteps))
+    SAVE_TO_FOLDER = "june12_kais2_swapped_code" #
     if not os.path.exists(SAVE_TO_FOLDER):
         os.makedirs(SAVE_TO_FOLDER)
         os.makedirs(SAVE_TO_FOLDER+"/model")
@@ -352,6 +372,7 @@ if __name__ == "__main__":
         #TODO Believe step just wants the index of the action.
 
         observation, reward, done, info = env.step(action_idx)
+        #print("obs after step: ", total_size(observation))
         if reward!=0:
             print("Got reward: ", reward)
             print("Taking action ", action_idx)
@@ -375,14 +396,18 @@ if __name__ == "__main__":
             #x_t1 = game_state.screen_buffer
             #reset returns the initial scren buffer.
             x_t1 = env.reset()
+            food = 0
+            poison = 0
         else:
             x_t1 = observation
             misc = meas[0][0]
 
         #Img to black/white
-        x_t1 = preprocessImg(x_t1, size=(img_rows, img_cols))
-        x_t1 = np.reshape(x_t1, (1, img_rows, img_cols, 1))
-        s_t1 = np.append(x_t1, s_t[:, :, :, :3], axis=3) #KOE: What is this? Some sequence of images?
+        #x_t1 = preprocessImg(x_t1, size=(img_rows, img_cols))
+        #x_t1 = np.reshape(x_t1, (1, img_rows, img_cols, 1))
+        #s_t1 = np.append(x_t1, s_t[:, :, :, :3], axis=3) #KOE: What is this? Some sequence of images?
+
+        s_t1 = np.expand_dims(x_t1, axis=0) # 1x64x64x4
 
 
         #KOETODO: Need to think about if I should give the banana signal only exactly when picking, or
@@ -417,7 +442,7 @@ if __name__ == "__main__":
         agent.replay_memory(s_t, action_idx, r_t, s_t1, m_t, done)
 
         #KOETODO: Think about normalization.
-        m_t = np.array([meas[0][0]/100.0, food, poison]) # Measurement after transition
+        m_t = np.array([meas[0][0]/100.0, poison, food]) # Measurement after transition
 
         # Do the training
         if t > agent.observe and t % agent.timestep_per_train == 0:
@@ -447,8 +472,7 @@ if __name__ == "__main__":
                 print("TIME", t, "/ GAME", GAME, "/ STATE", state, "/ EPSILON", agent.epsilon, \
                       "/ Food", food, "/ Poison", poison, "/ LOSS", loss_buffer[-1])
             # "/ ACTION", action_idx, "/ REWARD", r_t, \ KOE: Don't see point in printing CURRENT action and reward.
-            food = 0
-            poison = 0
+
 
             # Save Agent's Performance Statistics
             #TODO Could consider simplifying and just saving after every game.
