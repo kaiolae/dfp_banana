@@ -8,8 +8,9 @@ import numpy as np
 from collections import deque
 import time
 import os
-
+import sys
 from gym_unity.envs.unity_env import UnityEnv
+import getopt
 
 import json
 from keras.models import model_from_json
@@ -232,6 +233,30 @@ class DFPAgent:
 if __name__ == "__main__":
 
 
+    #Parsing arguments
+    loaded_model = '' #if empty, we start from scratch. TODO: Loading is an experiment. May not work, since we lose the replay buffer.
+    goal_agnostic = True #Goal-agnostic training was found to be essential to generalize to new goals in the original DFP paper.
+    argv = sys.argv[1:]
+    try:
+        opts, args = getopt.getopt(argv, "l:g", ["loaded_model=", "goal_agnostic_off"])
+    except getopt.GetoptError:
+        print('dfp.py --loaded_model optional_loaded_model.h5')
+        sys.exit(2)
+    for opt, arg in opts:
+        if opt in ("-l", "--loaded_model"):
+            loaded_model = arg
+        if opt in ("-g", "--goal_agnostic_off"):
+            goal_agnostic = False
+
+    print("Training is goal agnostic? ", goal_agnostic)
+
+
+    SAVE_TO_FOLDER = "june17_testing_none_agnostic_more_3"
+
+    if not os.path.exists(SAVE_TO_FOLDER):
+        os.makedirs(SAVE_TO_FOLDER)
+        os.makedirs(SAVE_TO_FOLDER+"/model")
+
     start=time.time()
     mask_unused_gpus()
 
@@ -245,7 +270,7 @@ if __name__ == "__main__":
     #TODO Worker_id can be changed to run in parallell
     #Flatten_branched gives us a onehot encoding of all 54 action combinations.
     print("Opening unity env")
-    env = UnityEnv("../unity_envs/kais_banana2", worker_id=44, use_visual=True,  flatten_branched=True) #KOE: Note: If I accept images as uint8_visual=True, I have to convert to float later.
+    env = UnityEnv("../unity_envs/kais_banana2", worker_id=8, use_visual=True,  flatten_branched=True) #KOE: Note: If I accept images as uint8_visual=True, I have to convert to float later.
 
     print("Resetting env")
     initial_observation = env.reset()
@@ -275,8 +300,15 @@ if __name__ == "__main__":
 
     state_size = (img_rows, img_cols, img_channels)
     agent = DFPAgent(state_size, measurement_size, action_size, timesteps)
+    agent.model = Networks.dfp_network(state_size, measurement_size, goal_size, action_size, len(timesteps),
+                                       agent.learning_rate)
 
-    agent.model = Networks.dfp_network(state_size, measurement_size, goal_size, action_size, len(timesteps), agent.learning_rate)
+    if loaded_model:
+        print("Loading stored model from ", loaded_model)
+        agent.load_model(loaded_model)
+        agent.epsilon = agent.final_epsilon #After training, we want to visualize without randomness.
+    else:
+        print("Starting training from scratch. Not loading model.")
 
     #x_t = game_state.screen_buffer # 480 x 640
     #x_t = preprocessImg(initial_observation, size=(img_rows, img_cols))
@@ -306,11 +338,14 @@ if __name__ == "__main__":
     # KOE: Battery, poison, food. No way to affect battery so far except standing still. Maybe that will happen?
     #KOETODO: Rewarding both food and poison as an initial test. If that works, but the other not,
     #maybe the color vision is a problem?
-    goal = np.array([0.0, -1.0, 1.0] * len(timesteps))
-    SAVE_TO_FOLDER = "june12_kais2_swapped_code" #
-    if not os.path.exists(SAVE_TO_FOLDER):
-        os.makedirs(SAVE_TO_FOLDER)
-        os.makedirs(SAVE_TO_FOLDER+"/model")
+    if goal_agnostic:
+        goal_vector= [random.uniform(-1,1) for i in range(3)]
+    else:
+        goal_vector = [0.0, -1.0, 1.0]
+
+    goal = np.array(goal_vector * len(timesteps))
+    print("Initial goal vector is ", goal_vector)
+    print("Initial goal is ", goal)
 
     #TODOKOE: Need to implement randomized goals.
     #KOE: Now we're talking! This is the one to allow evolving goals!
@@ -396,8 +431,17 @@ if __name__ == "__main__":
             #x_t1 = game_state.screen_buffer
             #reset returns the initial scren buffer.
             x_t1 = env.reset()
-            food = 0
-            poison = 0
+            food=0
+            poison=0
+
+            if goal_agnostic:
+                #If goal agnostic, we randomize goal between episodes
+                #TODO Original DFP paper had two goal agnostic modes: [-1,1] and[0,1], Just trying the former here.
+                goal_vector= [random.uniform(-1,1) for i in range(3)]
+                goal = np.array(goal_vector * len(timesteps))
+                inference_goal=goal
+                print("Goal agnostic training. Randomizing goal: ", goal)
+
         else:
             x_t1 = observation
             misc = meas[0][0]
