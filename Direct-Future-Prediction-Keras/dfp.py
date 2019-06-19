@@ -55,6 +55,7 @@ def mask_unused_gpus(leave_unmasked=1):
   except Exception as e:
     print('"nvidia-smi" is probably not installed. GPUs are not masked', e)
 
+MAX_BATTERY=100
 
 class DFPAgent:
 
@@ -251,7 +252,7 @@ if __name__ == "__main__":
     print("Training is goal agnostic? ", goal_agnostic)
 
 
-    SAVE_TO_FOLDER = "june17_testing_none_agnostic_more_3"
+    SAVE_TO_FOLDER = "june19_battery_1_minus1_1"
 
     if not os.path.exists(SAVE_TO_FOLDER):
         os.makedirs(SAVE_TO_FOLDER)
@@ -270,19 +271,14 @@ if __name__ == "__main__":
     #TODO Worker_id can be changed to run in parallell
     #Flatten_branched gives us a onehot encoding of all 54 action combinations.
     print("Opening unity env")
-    env = UnityEnv("../unity_envs/kais_banana2", worker_id=8, use_visual=True,  flatten_branched=True) #KOE: Note: If I accept images as uint8_visual=True, I have to convert to float later.
+    env = UnityEnv("../unity_envs/kais_banana_with_battery_consumable", worker_id=21, use_visual=True,  flatten_branched=True) #KOE: Note: If I accept images as uint8_visual=True, I have to convert to float later.
 
     print("Resetting env")
     initial_observation = env.reset()
     #KOETODO This would have to be manually configured for each environment.
-    #KOE: What is this misc??
 
-
-    #misc = game_state.game_variables  # [Health]
-    #prev_misc = misc
-    #KOE: I think this should be the same as my battery measure.
-    misc = 100 # [Health]
-    prev_misc = misc
+    battery = 100 # [Health]
+    prev_battery = battery
 
     # game.get_available_buttons_size() # [Turn Left, Turn Right, Move Forward]
     print("Action space is: ", env.action_space)
@@ -332,7 +328,7 @@ if __name__ == "__main__":
     # Initial normalized measurements.
     #KOE: Not sure if I need to normalize...
     #KOE: Original paper normalized by stddev of the value under random exploration.
-    m_t = np.array([misc/100.0, poison, food])
+    m_t = np.array([battery/100.0, poison, food])
 
     # Goal
     # KOE: Battery, poison, food. No way to affect battery so far except standing still. Maybe that will happen?
@@ -341,7 +337,7 @@ if __name__ == "__main__":
     if goal_agnostic:
         goal_vector= [random.uniform(-1,1) for i in range(3)]
     else:
-        goal_vector = [0.0, -1.0, 1.0]
+        goal_vector = [1.0, -1.0, 1.0]
 
     goal = np.array(goal_vector * len(timesteps))
     print("Initial goal vector is ", goal_vector)
@@ -367,9 +363,10 @@ if __name__ == "__main__":
     food_buffer = []
     poison_buffer = []
     loss_buffer = []
+    battery_buffer = []
 
     #TODO Maybe set up some adaptive number of training episodes?
-    timesteps_per_game = 300 #KOE: I double checked that there are in fact exactly 300 steps per episode.
+    timesteps_per_game = 300 #KOE: I double checked that there are in fact exactly 300 steps per episode. NOTE: These are the steps in which we act. We act every 5th step, meaning the episode lasts 1500 steps.
     total_training_timesteps = timesteps_per_game*4000
 
     with open(SAVE_TO_FOLDER+"/dfp_stats.txt", "a+") as stats_file:
@@ -378,11 +375,12 @@ if __name__ == "__main__":
         stats_file.write('mavg_score ')
         stats_file.write('mavg_loss ')
         stats_file.write('var_score ')
+        stats_file.write('mavg_battery ')
         stats_file.write('mavg_food ')
         stats_file.write('mavg_poison \n')
 
     for t in range(total_training_timesteps):
-
+        #TODO: I didn't yet give the battery level an EFFECT (i.e. stop when empty). Just trying to learn prediction first.
         loss = 0
         r_t = 0
         a_t = np.zeros([action_size])
@@ -390,17 +388,7 @@ if __name__ == "__main__":
         # Epsilon Greedy
         action_idx  = agent.get_action(s_t, m_t, goal, inference_goal) #KOE: This is the forward pass through the NN.
 
-        '''
-        KOE: Here, we take the action, observe rewards, done and skip ahead.
-        game.set_action(a_t.tolist())
-        skiprate = agent.frame_per_action
-        game.advance_action(skiprate) #Repeats the action skiprate times and returns state after that.
 
-        game_state = game.get_state()  # Observe again after we take the action
-        is_terminated = game.is_episode_finished()
-
-        r_t = game.get_last_reward() 
-        '''
         #KOEComment: My unity agent also skips 5 frames between actions, controlled in the Unity interface.
         #The vector space in Unity has 4 branches, with multiple actions i each! Those can also be combined!
         #I need the ANN output to be able to select all combinations.
@@ -408,9 +396,9 @@ if __name__ == "__main__":
 
         observation, reward, done, info = env.step(action_idx)
         #print("obs after step: ", total_size(observation))
-        if reward!=0:
-            print("Got reward: ", reward)
-            print("Taking action ", action_idx)
+        #if reward!=0:
+        #    print("Got reward: ", reward)
+        #    print("Taking action ", action_idx)
         #TODO How to step ahead multiple steps? - I asked github- check what they suggest.
 
         #Observation is the image. vector_observations are the measurements.
@@ -424,10 +412,11 @@ if __name__ == "__main__":
             reward_buffer.append(food-poison)
             food_buffer.append(food)
             poison_buffer.append(poison)
+            battery_buffer.append(battery)
             print ("Episode Finish ")
             #game.new_episode()
-            misc = 100 #KOE: Not sure what's the point of this. Maybe remove?
-            #misc = game_state.game_variables
+            battery = 100 #KOE: Not sure what's the point of this. Maybe remove?
+            #battery = game_state.game_variables
             #x_t1 = game_state.screen_buffer
             #reset returns the initial scren buffer.
             x_t1 = env.reset()
@@ -444,7 +433,7 @@ if __name__ == "__main__":
 
         else:
             x_t1 = observation
-            misc = meas[0][0]
+            battery-=1 #Always reducing by 1
 
         #Img to black/white
         #x_t1 = preprocessImg(x_t1, size=(img_rows, img_cols))
@@ -467,6 +456,10 @@ if __name__ == "__main__":
         if (reward==1): # Pick up food
             food += 1
             print("Picked up. Current food is ", food)
+        if reward != -1 and reward != 1 and reward!=0:
+            print("Touched a battery!! Battery restored!")
+            battery+=100
+
 
         #KOE: Remove?
         '''if (done):
@@ -475,7 +468,7 @@ if __name__ == "__main__":
             life += 1'''
 
         # Update the cache
-        prev_misc = misc
+        prev_battery = battery
 
         #KOETODO: Storing here m_t, but we want to predict m_t+1. How is that trained?
         # save the sample <s, a, r, s'> to the replay memory and decrease epsilon
@@ -486,7 +479,7 @@ if __name__ == "__main__":
         agent.replay_memory(s_t, action_idx, r_t, s_t1, m_t, done)
 
         #KOETODO: Think about normalization.
-        m_t = np.array([meas[0][0]/100.0, poison, food]) # Measurement after transition
+        m_t = np.array([battery/100.0, poison, food]) # Measurement after transition
 
         # Do the training
         if t > agent.observe and t % agent.timestep_per_train == 0:
@@ -514,7 +507,7 @@ if __name__ == "__main__":
             #print("DONE: loss size", len(loss) )
             if len(loss_buffer) >= 1:
                 print("TIME", t, "/ GAME", GAME, "/ STATE", state, "/ EPSILON", agent.epsilon, \
-                      "/ Food", food, "/ Poison", poison, "/ LOSS", loss_buffer[-1])
+                      "/ Food", food, "/ Poison", poison, "/ Avg Batt", np.mean(np.array(battery_buffer)), "/ LOSS", loss_buffer[-1])
             # "/ ACTION", action_idx, "/ REWARD", r_t, \ KOE: Don't see point in printing CURRENT action and reward.
 
 
@@ -528,10 +521,12 @@ if __name__ == "__main__":
 
                 mavg_score = np.mean(np.array(reward_buffer))
                 var_score = np.var(np.array(reward_buffer))
-                mavg_food = np.mean(np.array(food_buffer))
+                mavg_food = np.mean(np.array(food_buffer)) #TODO The moving average food here is a strange measure.
+                mavg_battery = np.mean(np.array(battery_buffer))
                 mavg_poison = np.mean(np.array(poison_buffer))
                 mavg_loss = np.mean(loss_buffer)
                 food_buffer = []
+                battery_buffer = []
                 poison_buffer = []
                 reward_buffer = []
                 loss_buffer = []
@@ -543,6 +538,7 @@ if __name__ == "__main__":
                     stats_file.write(str(mavg_score) + ' ')
                     stats_file.write(str(mavg_loss) + ' ')
                     stats_file.write(str(var_score) + ' ')
+                    stats_file.write(str(mavg_battery) + ' ')
                     stats_file.write(str(mavg_food) + ' ')
                     stats_file.write(str(mavg_poison) + '\n')
 

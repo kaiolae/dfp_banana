@@ -52,13 +52,13 @@ if __name__ == "__main__":
     #TODO Worker_id can be changed to run in parallell
     #Flatten_branched gives us a onehot encoding of all 54 action combinations.
     print("Opening unity env")
-    env = UnityEnv("../unity_envs/kais_banana2", worker_id=31, use_visual=True, flatten_branched=True)
+    env = UnityEnv("../unity_envs/kais_banana_with_battery", worker_id=31, use_visual=True, flatten_branched=True)
 
     print("Resetting env")
     initial_observation = env.reset()
 
-    misc = 100 # [Health]
-    prev_misc = misc
+    battery = 100 # [Health]
+    prev_battery = battery
     action_size = env.action_space.n
     print("Env has ", action_size, " actions.")
     measurement_size = 3 # [Battery, posion, food]
@@ -98,7 +98,7 @@ if __name__ == "__main__":
     # Initial normalized measurements.
     #KOE: Not sure if I need to normalize...
     #KOE: Original paper normalized by stddev of the value under random exploration.
-    m_t = np.array([misc/100.0, poison, food])
+    m_t = np.array([battery/100.0, poison, food])
 
     # Goal
     # KOE: Battery, poison, food. No way to affect battery so far except standing still. Maybe that will happen?
@@ -134,11 +134,11 @@ if __name__ == "__main__":
         if (done):
             print("Game done at timestep ", t)
             print ("Episode Finish ")
-            misc = 100
+            battery = 100
             x_t1 = env.reset()
         else:
             x_t1 = observation
-            misc = meas[0][0]
+            battery = battery
 
         #Img to black/white
         #x_t1 = preprocessImg(x_t1, size=(img_rows, img_cols))
@@ -153,10 +153,10 @@ if __name__ == "__main__":
             food += 1
             print("Picked up. Current food is ", food)
         # Update the cache
-        prev_misc = misc
+        prev_battery = battery
 
         #KOETODO: Think about normalization.
-        m_t = np.array([meas[0][0]/100.0, poison, food]) # Measurement after transition
+        m_t = np.array(battery/100.0, poison, food]) # Measurement after transition
         s_t = s_t1
         sleep(0.05) #To get real-time (not too fast) video
     env.close()
