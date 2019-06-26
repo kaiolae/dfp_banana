@@ -52,7 +52,7 @@ if __name__ == "__main__":
     #TODO Worker_id can be changed to run in parallell
     #Flatten_branched gives us a onehot encoding of all 54 action combinations.
     print("Opening unity env")
-    env = UnityEnv("../unity_envs/kais_banana_with_battery", worker_id=31, use_visual=True, flatten_branched=True)
+    env = UnityEnv("../unity_envs/kais_banana_with_battery_consumable_balanced", worker_id=22, use_visual=True, flatten_branched=True)
 
     print("Resetting env")
     initial_observation = env.reset()
@@ -105,10 +105,10 @@ if __name__ == "__main__":
     #KOETODO: Rewarding both food and poison as an initial test. If that works, but the other not,
     #maybe the color vision is a problem?
     #TODO: How to sync loaded weights with agent goal?
-    goal = np.array([0.0, 0.2, 0.2] * len(timesteps))
+    goal = np.array([1, 0.1, 0.1] * len(timesteps))
     #for both: goal = np.array([0.0, 1.0, -1.0] * len(timesteps))
     #TODO Make input argument
-    loaded_model = "june13_goal_agnostic_1/model/dfp.h5"
+    loaded_model = "june26_battery_balanced_2_agnostic/model/dfp.h5" #To see things working, swich to kais banana 2 with june13_goal_agnostic_1 as input.
     agent.load_model(loaded_model)
     agent.epsilon = agent.final_epsilon #After training, we want to visualize without randomness.
     inference_goal = goal
@@ -118,6 +118,8 @@ if __name__ == "__main__":
 
     recorded_frames = []
 
+
+    battery_picks = 0
     for t in range(num_timesteps):
 
         r_t = 0
@@ -152,13 +154,17 @@ if __name__ == "__main__":
         if (reward==1): # Pick up food
             food += 1
             print("Picked up. Current food is ", food)
+        if reward != -1 and reward != 1 and reward!=0:
+            battery+=100
+            battery_picks+=1
+            print("Touched a battery. Picks: ", battery_picks)
         # Update the cache
         prev_battery = battery
 
         #KOETODO: Think about normalization.
-        m_t = np.array(battery/100.0, poison, food]) # Measurement after transition
+        m_t = np.array([battery/100.0, poison, food]) # Measurement after transition
         s_t = s_t1
-        sleep(0.05) #To get real-time (not too fast) video
+        sleep(0.1) #To get real-time (not too fast) video
     env.close()
 
     recorded_frames=np.array(recorded_frames)

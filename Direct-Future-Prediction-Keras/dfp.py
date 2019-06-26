@@ -237,9 +237,12 @@ if __name__ == "__main__":
     #Parsing arguments
     loaded_model = '' #if empty, we start from scratch. TODO: Loading is an experiment. May not work, since we lose the replay buffer.
     goal_agnostic = True #Goal-agnostic training was found to be essential to generalize to new goals in the original DFP paper.
+    battery_limited = False #If true, agent stops and episode ends if battery runs out.
     argv = sys.argv[1:]
+    SAVE_TO_FOLDER = "june26_battery_sparse_fixed_gravity2"
+
     try:
-        opts, args = getopt.getopt(argv, "l:g", ["loaded_model=", "goal_agnostic_off"])
+        opts, args = getopt.getopt(argv, "l:g:b:s", ["loaded_model=", "goal_agnostic_off", "battery_limit_on", "save_to"])
     except getopt.GetoptError:
         print('dfp.py --loaded_model optional_loaded_model.h5')
         sys.exit(2)
@@ -248,11 +251,18 @@ if __name__ == "__main__":
             loaded_model = arg
         if opt in ("-g", "--goal_agnostic_off"):
             goal_agnostic = False
+        if opt in ("-b", "--battery_limit_on"):
+            battery_limited = True
+        if opt in ("-s", "--save_to"):
+            SAVE_TO_FOLDER = arg
+
 
     print("Training is goal agnostic? ", goal_agnostic)
 
 
-    SAVE_TO_FOLDER = "june19_battery_1_minus1_1"
+
+    if goal_agnostic:
+        SAVE_TO_FOLDER+="_agnostic"
 
     if not os.path.exists(SAVE_TO_FOLDER):
         os.makedirs(SAVE_TO_FOLDER)
@@ -271,7 +281,7 @@ if __name__ == "__main__":
     #TODO Worker_id can be changed to run in parallell
     #Flatten_branched gives us a onehot encoding of all 54 action combinations.
     print("Opening unity env")
-    env = UnityEnv("../unity_envs/kais_banana_with_battery_consumable", worker_id=21, use_visual=True,  flatten_branched=True) #KOE: Note: If I accept images as uint8_visual=True, I have to convert to float later.
+    env = UnityEnv("../unity_envs/kais_banana_with_battery_consumable_sparse", worker_id=12, use_visual=True,  flatten_branched=True) #KOE: Note: If I accept images as uint8_visual=True, I have to convert to float later.
 
     print("Resetting env")
     initial_observation = env.reset()
@@ -395,15 +405,11 @@ if __name__ == "__main__":
         #TODO Believe step just wants the index of the action.
 
         observation, reward, done, info = env.step(action_idx)
-        #print("obs after step: ", total_size(observation))
-        #if reward!=0:
-        #    print("Got reward: ", reward)
-        #    print("Taking action ", action_idx)
-        #TODO How to step ahead multiple steps? - I asked github- check what they suggest.
 
-        #Observation is the image. vector_observations are the measurements.
-        #battery, eaten_poison, eaten_food
-        meas = info['brain_info'].vector_observations
+        if battery_limited and battery<0:
+            done=True
+            print("Battery empty. Stopping.")
+
         if (done):
             print("Game done at timestep ", t)
             if ((food-poison) > max_reward):
@@ -460,12 +466,6 @@ if __name__ == "__main__":
             print("Touched a battery!! Battery restored!")
             battery+=100
 
-
-        #KOE: Remove?
-        '''if (done):
-            life = 0
-        else:
-            life += 1'''
 
         # Update the cache
         prev_battery = battery
