@@ -239,7 +239,7 @@ if __name__ == "__main__":
     goal_agnostic = True #Goal-agnostic training was found to be essential to generalize to new goals in the original DFP paper.
     battery_limited = False #If true, agent stops and episode ends if battery runs out.
     argv = sys.argv[1:]
-    SAVE_TO_FOLDER = "june26_battery_sparse_fixed_gravity2"
+    SAVE_TO_FOLDER = "june27_battery_balanced_objective1neg11"
 
     try:
         opts, args = getopt.getopt(argv, "l:g:b:s", ["loaded_model=", "goal_agnostic_off", "battery_limit_on", "save_to"])
@@ -264,6 +264,9 @@ if __name__ == "__main__":
     if goal_agnostic:
         SAVE_TO_FOLDER+="_agnostic"
 
+    if battery_limited:
+        SAVE_TO_FOLDER+="_battery_limit_on"
+
     if not os.path.exists(SAVE_TO_FOLDER):
         os.makedirs(SAVE_TO_FOLDER)
         os.makedirs(SAVE_TO_FOLDER+"/model")
@@ -281,7 +284,7 @@ if __name__ == "__main__":
     #TODO Worker_id can be changed to run in parallell
     #Flatten_branched gives us a onehot encoding of all 54 action combinations.
     print("Opening unity env")
-    env = UnityEnv("../unity_envs/kais_banana_with_battery_consumable_sparse", worker_id=12, use_visual=True,  flatten_branched=True) #KOE: Note: If I accept images as uint8_visual=True, I have to convert to float later.
+    env = UnityEnv("../unity_envs/kais_banana_with_battery_consumable_balanced", worker_id=14, use_visual=True,  flatten_branched=True) #KOE: Note: If I accept images as uint8_visual=True, I have to convert to float later.
 
     print("Resetting env")
     initial_observation = env.reset()
@@ -390,7 +393,6 @@ if __name__ == "__main__":
         stats_file.write('mavg_poison \n')
 
     for t in range(total_training_timesteps):
-        #TODO: I didn't yet give the battery level an EFFECT (i.e. stop when empty). Just trying to learn prediction first.
         loss = 0
         r_t = 0
         a_t = np.zeros([action_size])
