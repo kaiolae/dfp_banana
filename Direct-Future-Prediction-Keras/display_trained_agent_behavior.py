@@ -39,13 +39,14 @@ def mask_unused_gpus(leave_unmasked=1):
 
 
       #TODO: Consider loading experimental parameters, such as battery capacity, from file.
-def evaluate_a_goal_vector(goal_vector, env, dfp_network, num_timesteps = 300, display = True, battery = 100, timesteps = [1,2,4,8,16,32], goal_producing_network = None, stop_when_batt_empty = True):
+def evaluate_a_goal_vector(goal_vector, env, dfp_network, num_timesteps = 300, display = True, initial_battery = 100, timesteps = [1,2,4,8,16,32], goal_producing_network = None, stop_when_batt_empty = True, battery_refill_amount = 50):
     #Runs one "game" with a number of timesteps, displaying behavior or returning scores.
     #goal_vector is the goal for a single timestep (e.g. [food, poison, battery]), and automatically repeated for all timesteps.
     #dfp_network is a network initialized with the weights from the trained DFP network
     #If goal-producing network is None, we use the goal_vector. Otherwise, we use the one produced by the network, which is adaptive.
     print("Resetting env")
     initial_observation = env.reset()
+    battery=initial_battery
 
     prev_battery = battery
     s_t = initial_observation
@@ -110,7 +111,7 @@ def evaluate_a_goal_vector(goal_vector, env, dfp_network, num_timesteps = 300, d
             food += 1
             print("Picked up. Current food is ", food)
         if reward != -1 and reward != 1 and reward!=0:
-            battery+=100
+            battery+=battery_refill_amount
             battery_picks+=1
             print("Touched a battery. Picks: ", battery_picks)
 
@@ -125,7 +126,7 @@ def evaluate_a_goal_vector(goal_vector, env, dfp_network, num_timesteps = 300, d
         recorded_frames=recorded_frames.astype(np.uint8)
         skvideo.io.vwrite("test_video.mp4", recorded_frames)
     if goal_producing_network:
-        return {"battery": battery, "poison": poison, "food": food, "battery_picks": battery_picks, "goal_history":all_goal_outputs}
+        return {"battery": battery, "poison": poison, "food": food, "battery_picks": battery_picks, "goal_history":all_goal_outputs, "num_timesteps_elapsed":t}
     else:
         return [battery, poison, food, battery_picks]
 
