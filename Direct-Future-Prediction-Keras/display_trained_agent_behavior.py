@@ -39,14 +39,16 @@ def mask_unused_gpus(leave_unmasked=1):
 
 
       #TODO: Consider loading experimental parameters, such as battery capacity, from file.
-def evaluate_a_goal_vector(goal_vector, env, dfp_network, num_timesteps = 300, display = True, initial_battery = 100, timesteps = [1,2,4,8,16,32], goal_producing_network = None, stop_when_batt_empty = True, battery_refill_amount = 50):
+def evaluate_a_goal_vector(goal_vector, env, dfp_network, num_timesteps = 300, display = True, battery_capacity = 100, timesteps = [1,2,4,8,16,32], goal_producing_network = None, stop_when_batt_empty = True, battery_refill_amount = 50,
+                           penalty_for_picking=0):
     #Runs one "game" with a number of timesteps, displaying behavior or returning scores.
     #goal_vector is the goal for a single timestep (e.g. [food, poison, battery]), and automatically repeated for all timesteps.
     #dfp_network is a network initialized with the weights from the trained DFP network
     #If goal-producing network is None, we use the goal_vector. Otherwise, we use the one produced by the network, which is adaptive.
+    #Penalty for picking: Simulates time taken to charge, by ticking ahead a number of timesteps
     print("Resetting env")
     initial_observation = env.reset()
-    battery=initial_battery
+    battery=battery_capacity
 
     prev_battery = battery
     s_t = initial_observation
@@ -70,21 +72,24 @@ def evaluate_a_goal_vector(goal_vector, env, dfp_network, num_timesteps = 300, d
     if goal_producing_network:
         all_goal_outputs = []
 
-    for t in range(num_timesteps):
-
+    t = 0
+    while t < num_timesteps:
+        t+=1
         if goal_producing_network:
             current_goal_vec = goal_producing_network.activate(m_t)
             all_goal_outputs.append(current_goal_vec)
             goal = np.array(current_goal_vec * len(timesteps))
             inference_goal = goal
         # Epsilon Greedy
+
+
+        print("Measurements are: ", m_t)
         action_idx  = dfp_network.get_action(s_t, m_t, goal, inference_goal) #KOE: This is the forward pass through the NN.
         observation, reward, done, info = env.step(action_idx)
         if display:
             recorded_frames.append(observation)
         if reward!=0:
             print("Got reward: ", reward)
-            print("Taking action ", action_idx)
         meas = info['brain_info'].vector_observations
         battery -= 1  # Always reducing by 1
         if battery == 0 and stop_when_batt_empty:
@@ -112,8 +117,13 @@ def evaluate_a_goal_vector(goal_vector, env, dfp_network, num_timesteps = 300, d
             print("Picked up. Current food is ", food)
         if reward != -1 and reward != 1 and reward!=0:
             battery+=battery_refill_amount
+            if battery > battery_capacity:
+                battery = battery_capacity
             battery_picks+=1
             print("Touched a battery. Picks: ", battery_picks)
+            if penalty_for_picking:
+                t+=penalty_for_picking
+                print("Skipping ahead ", penalty_for_picking, " timesteps.")
 
 
         #KOETODO: Think about normalization.
@@ -128,7 +138,7 @@ def evaluate_a_goal_vector(goal_vector, env, dfp_network, num_timesteps = 300, d
     if goal_producing_network:
         return {"battery": battery, "poison": poison, "food": food, "battery_picks": battery_picks, "goal_history":all_goal_outputs, "num_timesteps_elapsed":t}
     else:
-        return [battery, poison, food, battery_picks]
+        return {"battery": battery, "poison": poison, "food": food, "battery_picks": battery_picks, "goal_history":None, "num_timesteps_elapsed":t}
 
 if __name__ == "__main__":
     mask_unused_gpus()
@@ -143,7 +153,7 @@ if __name__ == "__main__":
     #TODO Worker_id can be changed to run in parallell
     #Flatten_branched gives us a onehot encoding of all 54 action combinations.
     print("Opening unity env")
-    env = UnityEnv("../unity_envs/kais_banana_with_battery_consumable_balanced", worker_id=37, use_visual=True, flatten_branched=True)
+    env = UnityEnv("../unity_envs/kais_banana_with_battery_consumable_balanced", worker_id=46, use_visual=True, flatten_branched=True)
 
     measurement_size = 3
     timesteps = [1, 2, 4, 8, 16, 32]
@@ -159,10 +169,10 @@ if __name__ == "__main__":
     dfp_net = DFPAgent(state_size, measurement_size, action_size, timesteps)
     dfp_net.model = Networks.dfp_network(state_size, measurement_size, goal_size, action_size, len(timesteps), dfp_net.learning_rate)
 
-    loaded_model = "june26_battery_sparse_fixed_gravity_agnostic/model/dfp.h5"
+    loaded_model = "june27_battery_balanced1_agnostic_battery_limit_on/model/dfp.h5"
     dfp_net.load_model(loaded_model)
     dfp_net.epsilon = dfp_net.final_epsilon
 
-    evaluate_a_goal_vector([1,-1,1], env, dfp_net, display=False)
+    evaluate_a_goal_vector([1,0,1.0], env, dfp_net, display=True, battery_refill_amount=100, battery_capacity=100)
 
     env.close()

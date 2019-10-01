@@ -78,7 +78,7 @@ class DFPAgent:
         self.initial_epsilon = 1.0
         self.final_epsilon = 0.0001
         self.batch_size = 32 # KOE: Increased from 32 to 256 to see if I can utilize gpu more. No effect.
-        self.observe = 400#2000 #TODO 2000
+        self.observe = 2000
         self.explore = 50000 
         self.frame_per_action = 4
         #KOETODO: If this means how much to observe btw each train, then this model seems very
@@ -239,7 +239,7 @@ if __name__ == "__main__":
     goal_agnostic = True #Goal-agnostic training was found to be essential to generalize to new goals in the original DFP paper.
     battery_limited = False #If true, agent stops and episode ends if battery runs out.
     argv = sys.argv[1:]
-    SAVE_TO_FOLDER = "june27_battery_balanced_objective1neg11"
+    SAVE_TO_FOLDER = "oct1_battery_balanced"
 
     try:
         opts, args = getopt.getopt(argv, "l:g:b:s", ["loaded_model=", "goal_agnostic_off", "battery_limit_on", "save_to"])
@@ -338,10 +338,8 @@ if __name__ == "__main__":
     # Number of poison pickup as measurement
     poison = 0
 
-    # Initial normalized measurements.
-    #KOE: Not sure if I need to normalize...
-    #KOE: Original paper normalized by stddev of the value under random exploration.
-    m_t = np.array([battery/100.0, poison, food])
+    #KOE: Normalizing battery by dividing by 10, so battery ranges from 0->10, the two others around 0->20/30. Should be even enough?
+    m_t = np.array([battery/10.0, poison, food])
 
     # Goal
     # KOE: Battery, poison, food. No way to affect battery so far except standing still. Maybe that will happen?
@@ -380,7 +378,7 @@ if __name__ == "__main__":
 
     #TODO Maybe set up some adaptive number of training episodes?
     timesteps_per_game = 300 #KOE: I double checked that there are in fact exactly 300 steps per episode. NOTE: These are the steps in which we act. We act every 5th step, meaning the episode lasts 1500 steps.
-    total_training_timesteps = timesteps_per_game*4000
+    total_training_timesteps = timesteps_per_game*10000 #Was 4000
 
     with open(SAVE_TO_FOLDER+"/dfp_stats.txt", "a+") as stats_file:
         stats_file.write('GAME_NUMBER ')
@@ -480,8 +478,7 @@ if __name__ == "__main__":
         #TODO: Analyze a bit what s_t is, is it 4 images in a row??
         agent.replay_memory(s_t, action_idx, r_t, s_t1, m_t, done)
 
-        #KOETODO: Think about normalization.
-        m_t = np.array([battery/100.0, poison, food]) # Measurement after transition
+        m_t = np.array([battery/10.0, poison, food]) # Measurement after transition
 
         # Do the training
         if t > agent.observe and t % agent.timestep_per_train == 0:

@@ -21,7 +21,7 @@ def store_individual_behavior(genome):
 
     net = neat.nn.FeedForwardNetwork.create(genome, config)
     num_steps_per_dimension = 20
-    measures_range = {"battery":(0,4),"foods" : (0,20), "poisons":(0,20)} #Battery is normalized. 4 battery would require picking 4 in a row, likely never gets higher than that,
+    measures_range = {"battery":(0,10),"foods" : (0,30), "poisons":(0,30)} #Battery is normalized. Normally, it ranges from 0 to 10, representing 0 to 100%.
 
     measures_to_objectives_matrix = [] #Vector of vector where each element has form [m1, m2, m3, o1, o2, o3]
     col_headers = ["m_battery", "m_poisons", "m_food", "o_battery", "o_poisons", "o_foods"]
@@ -44,15 +44,13 @@ def store_individual_behavior(genome):
 
 if __name__ == '__main__':
 
-    # Either: fitness - to store the re-evaluated fitness of this individual, or behavior - to store the learned measure-objective mappings
-    # video -to store a video of agent behavior.
     analysis_mode = sys.argv[1]
 
     winner_filename = sys.argv[2] #Pickled winner indiv
     with open(winner_filename, 'rb') as pickle_file:
         winner_genome = pickle.load(pickle_file)
 
-    config_file = "config"
+    config_file = "/home/kaiolae/code/dfp_banana/Direct-Future-Prediction-Keras/config"
     config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
                          neat.DefaultSpeciesSet, neat.DefaultStagnation,
                          config_file)
