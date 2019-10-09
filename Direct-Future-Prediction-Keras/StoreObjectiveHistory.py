@@ -1,11 +1,11 @@
-##Compares performance between 1) Evolved Goal Vectors (loaded from pickled individual),
-##2) Static Goal Vector(s), 3) Any hardcoded rules.
+##Stores the objective values for all objectives throughout a full run. Useful to see how it changes as we go.
+#TODO :Should also store measurements!
 
 from display_trained_agent_behavior import evaluate_a_goal_vector, mask_unused_gpus
 
 import tensorflow as tf
 from keras import backend as K
-from gym_unity.envs.unity_env import UnityEnv
+from gym_unity.envs import UnityEnv
 from dfp import DFPAgent
 from networks import Networks
 import numpy as np
@@ -23,25 +23,14 @@ BATTERY_CAPACITY = 100
 PENALTY_FOR_PICKING = 100
 NUM_TIMESTEPS = 900
 
-NUM_TESTS_PER_SETUP = 25
 
+def make_measurements_and_objectives_dataframe(store_to_filepath, dfp_net, goal_net, env):
 
-HARDCODED_PREFERENCE_VECTOR = [1,-1,1]
+    evaluate_a_goal_vector([0,0,0], env, dfp_net, goal_producing_network=goal_net, display=False,
+                                         battery_refill_amount=BATTERY_REFILL_AMOUNT,
+                                         battery_capacity=BATTERY_CAPACITY, penalty_for_picking=PENALTY_FOR_PICKING, num_timesteps=NUM_TIMESTEPS,
+                                         record_meas_and_objs=store_to_filepath)
 
-def make_result_summary_dataframe(env, store_to_filepath, dfp_net, goal_vector=[0,0,0], goal_net=None):
-    #When using evolved goals, fill in goal-net. Otherwise, fill in goal-vector.
-
-    results_summary = []
-    for i in range(NUM_TESTS_PER_SETUP):
-        eval_result = evaluate_a_goal_vector(goal_vector, env, dfp_net, goal_producing_network=goal_net, display=False,
-                                             battery_refill_amount=BATTERY_REFILL_AMOUNT,
-                                             battery_capacity=BATTERY_CAPACITY, penalty_for_picking=PENALTY_FOR_PICKING, num_timesteps=NUM_TIMESTEPS)
-        results_summary.append(eval_result)
-        print("Test ", i, " done")
-
-    result_frame = pd.DataFrame(results_summary)
-
-    result_frame.to_csv(store_to_filepath, index=None, header=True)
 
 
 
@@ -51,15 +40,12 @@ if __name__ == "__main__":
     winner_filename = sys.argv[1] #Pickled winner indiv
     store_to_folder = sys.argv[2]
 
+
     if(len(sys.argv) > 2):
         seed = int(sys.argv[3])
     else:
         seed = 1
-    Utilities.store_seed_to_folder(seed, store_to_folder, "ComparePerformance")
-
-    env = UnityEnv("../unity_envs/kais_banana_with_explicit_charge_decision_red_battery_900_timesteps", worker_id=14,
-                   use_visual=True,
-                   flatten_branched=True, seed=seed)
+    Utilities.store_seed_to_folder(seed, store_to_folder, "StoreObjectiveHistory")
 
     with open(winner_filename, 'rb') as pickle_file:
         winner_genome = pickle.load(pickle_file)
@@ -67,6 +53,12 @@ if __name__ == "__main__":
     config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
                          neat.DefaultSpeciesSet, neat.DefaultStagnation,
                          "config")
+
+
+    env = UnityEnv("../unity_envs/kais_banana_with_explicit_charge_decision_red_battery_900_timesteps", worker_id=29,
+                   use_visual=True,
+                   flatten_branched=True, seed=seed)
+
 
     goal_net = neat.nn.FeedForwardNetwork.create(winner_genome, config)
 
@@ -89,8 +81,8 @@ if __name__ == "__main__":
     dfp_net.load_model(loaded_model)
     dfp_net.epsilon = dfp_net.final_epsilon
 
-    make_result_summary_dataframe(env, store_to_folder+"/evolved_result_summary.csv", dfp_net, goal_net=goal_net)
-    make_result_summary_dataframe(env, store_to_folder+"/hardcoded_result_summary.csv",dfp_net, goal_vector=HARDCODED_PREFERENCE_VECTOR)
+
+    make_measurements_and_objectives_dataframe(store_to_folder+"/measurements_and_objectives_dataframe.csv", dfp_net, goal_net, env)
 
 
 

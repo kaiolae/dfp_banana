@@ -9,7 +9,7 @@ from collections import deque
 import time
 import os
 import sys
-from gym_unity.envs.unity_env import UnityEnv
+from gym_unity.envs import UnityEnv
 import getopt
 
 import json
@@ -28,6 +28,11 @@ from networks import Networks
 import pandas as pd
 
 from helper_code import total_size
+
+#If true, we try to predict the number of picked batteries rather than the battery level - to make this prediction more similar to that of
+#foods and poisons- The reason is learned battery seeking performs worse than food seeking.
+MEASURE_NUM_BATTERIES_INSTEAD_OF_BATTERY_LEVEL = True
+
 
 #KOE: Get rid of image preprocessing and stacking.. Deepq works fine without it.
 #KOE: making my edits directly here. The original one is still in dfp_original.py
@@ -55,7 +60,7 @@ def mask_unused_gpus(leave_unmasked=1):
   except Exception as e:
     print('"nvidia-smi" is probably not installed. GPUs are not masked', e)
 
-MAX_BATTERY=100
+BATTERY_CAPACITY =100
 
 class DFPAgent:
 
@@ -239,10 +244,11 @@ if __name__ == "__main__":
     goal_agnostic = True #Goal-agnostic training was found to be essential to generalize to new goals in the original DFP paper.
     battery_limited = False #If true, agent stops and episode ends if battery runs out.
     argv = sys.argv[1:]
-    SAVE_TO_FOLDER = "oct1_battery_balanced"
+    SAVE_TO_FOLDER = "oct8_explicitly_controlled_battery_charging"
+    seed = 1
 
     try:
-        opts, args = getopt.getopt(argv, "l:g:b:s", ["loaded_model=", "goal_agnostic_off", "battery_limit_on", "save_to"])
+        opts, args = getopt.getopt(argv, "l:g:b:s:d", ["loaded_model=", "goal_agnostic_off", "battery_limit_on", "save_to", "seed"])
     except getopt.GetoptError:
         print('dfp.py --loaded_model optional_loaded_model.h5')
         sys.exit(2)
@@ -255,6 +261,10 @@ if __name__ == "__main__":
             battery_limited = True
         if opt in ("-s", "--save_to"):
             SAVE_TO_FOLDER = arg
+        if opt in ("-d", "--seed"):
+            seed = int(arg)
+
+
 
 
     print("Training is goal agnostic? ", goal_agnostic)
@@ -271,6 +281,8 @@ if __name__ == "__main__":
         os.makedirs(SAVE_TO_FOLDER)
         os.makedirs(SAVE_TO_FOLDER+"/model")
 
+    Utilities.store_seed_to_folder(seed, SAVE_TO_FOLDER, "dfp")
+
     start=time.time()
     mask_unused_gpus()
 
@@ -284,7 +296,7 @@ if __name__ == "__main__":
     #TODO Worker_id can be changed to run in parallell
     #Flatten_branched gives us a onehot encoding of all 54 action combinations.
     print("Opening unity env")
-    env = UnityEnv("../unity_envs/kais_banana_with_battery_consumable_balanced", worker_id=14, use_visual=True,  flatten_branched=True) #KOE: Note: If I accept images as uint8_visual=True, I have to convert to float later.
+    env = UnityEnv("../unity_envs/kais_banana_with_explicit_charge_decision_red_battery_300_timesteps", worker_id=22, use_visual=True,  flatten_branched=True, seed=seed) #KOE: Note: If I accept images as uint8_visual=True, I have to convert to float later.
 
     print("Resetting env")
     initial_observation = env.reset()
@@ -337,9 +349,13 @@ if __name__ == "__main__":
 
     # Number of poison pickup as measurement
     poison = 0
+    num_batteries = 0
 
-    #KOE: Normalizing battery by dividing by 10, so battery ranges from 0->10, the two others around 0->20/30. Should be even enough?
-    m_t = np.array([battery/10.0, poison, food])
+    if MEASURE_NUM_BATTERIES_INSTEAD_OF_BATTERY_LEVEL:
+        m_t = np.array([num_batteries, poison, food])
+    else:
+        #KOE: Normalizing battery by dividing by 10, so battery ranges from 0->10, the two others around 0->20/30. Should be even enough?
+        m_t = np.array([battery/10.0, poison, food])
 
     # Goal
     # KOE: Battery, poison, food. No way to affect battery so far except standing still. Maybe that will happen?
@@ -348,7 +364,7 @@ if __name__ == "__main__":
     if goal_agnostic:
         goal_vector= [random.uniform(-1,1) for i in range(3)]
     else:
-        goal_vector = [1.0, -1.0, 1.0]
+        goal_vector = [-1.0, -1.0, 1.0]
 
     goal = np.array(goal_vector * len(timesteps))
     print("Initial goal vector is ", goal_vector)
@@ -372,6 +388,7 @@ if __name__ == "__main__":
     # Buffer to compute rolling statistics 
     reward_buffer = []
     food_buffer = []
+    num_batteries_buffer = []
     poison_buffer = []
     loss_buffer = []
     battery_buffer = []
@@ -387,6 +404,7 @@ if __name__ == "__main__":
         stats_file.write('mavg_loss ')
         stats_file.write('var_score ')
         stats_file.write('mavg_battery ')
+        stats_file.write('mavg_num_batteries ')
         stats_file.write('mavg_food ')
         stats_file.write('mavg_poison \n')
 
@@ -419,6 +437,7 @@ if __name__ == "__main__":
             food_buffer.append(food)
             poison_buffer.append(poison)
             battery_buffer.append(battery)
+            num_batteries_buffer.append(num_batteries)
             print ("Episode Finish ")
             #game.new_episode()
             battery = 100 #KOE: Not sure what's the point of this. Maybe remove?
@@ -428,6 +447,7 @@ if __name__ == "__main__":
             x_t1 = env.reset()
             food=0
             poison=0
+            num_batteries = 0
 
             if goal_agnostic:
                 #If goal agnostic, we randomize goal between episodes
@@ -456,15 +476,22 @@ if __name__ == "__main__":
         #TODO: Meas will now have accumulated foods/poisons. I could also give them as 0/1. Not sure
         #what is best. Original code gave accumulated values, but it shouldn't matter since the DIFF
         #is what is used in predictions.
-        if (reward==-1): # Pick up Poison
+        if (reward>-1.05 and reward<-0.95): # Pick up Poison
             poison += 1
             print("Picked up. Current poison is ", poison)
-        if (reward==1): # Pick up food
+        if (reward > 0.95 and reward <1.05): # Pick up food
             food += 1
             print("Picked up. Current food is ", food)
-        if reward != -1 and reward != 1 and reward!=0:
+        if reward > 0.05 and reward < 0.15:
             print("Touched a battery!! Battery restored!")
+            print("Reward was: ", reward)
             battery+=100
+            num_batteries += 1
+            if battery > BATTERY_CAPACITY:
+                battery = BATTERY_CAPACITY
+        if reward > -0.15 and reward <-0.05:
+            print("Touched a battery without charging!!")
+            print("Reward was: ", reward)
 
 
         # Update the cache
@@ -474,11 +501,16 @@ if __name__ == "__main__":
         # save the sample <s, a, r, s'> to the replay memory and decrease epsilon
         #KOE: This seems to be handled by future_measurements in the training code.
 
+
+        if MEASURE_NUM_BATTERIES_INSTEAD_OF_BATTERY_LEVEL:
+            m_t = np.array([num_batteries, poison, food])  # Measurement after transition
+        else:
+            m_t = np.array([battery/10.0, poison, food]) # Measurement after transition
+
+        #KOE: Moved this to under m_t oct2 2019 - strange to have it over.
         #print("Storing into memory. s_t is ", s_t.shape)
         #TODO: Analyze a bit what s_t is, is it 4 images in a row??
         agent.replay_memory(s_t, action_idx, r_t, s_t1, m_t, done)
-
-        m_t = np.array([battery/10.0, poison, food]) # Measurement after transition
 
         # Do the training
         if t > agent.observe and t % agent.timestep_per_train == 0:
@@ -506,7 +538,8 @@ if __name__ == "__main__":
             #print("DONE: loss size", len(loss) )
             if len(loss_buffer) >= 1:
                 print("TIME", t, "/ GAME", GAME, "/ STATE", state, "/ EPSILON", agent.epsilon, \
-                      "/ Food", food, "/ Poison", poison, "/ Avg Batt", np.mean(np.array(battery_buffer)), "/ LOSS", loss_buffer[-1])
+                      "/ Food", food, "/ Poison", poison, "/ Avg Batt", np.mean(np.array(battery_buffer)),
+                      "/ Avg Num Batt", np.mean(np.array(num_batteries_buffer)), "/ LOSS", loss_buffer[-1])
             # "/ ACTION", action_idx, "/ REWARD", r_t, \ KOE: Don't see point in printing CURRENT action and reward.
 
 
@@ -524,11 +557,13 @@ if __name__ == "__main__":
                 mavg_battery = np.mean(np.array(battery_buffer))
                 mavg_poison = np.mean(np.array(poison_buffer))
                 mavg_loss = np.mean(loss_buffer)
+                mavg_num_batteries = np.mean(np.array(num_batteries_buffer))
                 food_buffer = []
                 battery_buffer = []
                 poison_buffer = []
                 reward_buffer = []
                 loss_buffer = []
+                num_batteries_buffer = []
 
                 # Write Rolling Statistics to file
                 with open(SAVE_TO_FOLDER+"/dfp_stats.txt", "a+") as stats_file:
@@ -538,6 +573,7 @@ if __name__ == "__main__":
                     stats_file.write(str(mavg_loss) + ' ')
                     stats_file.write(str(var_score) + ' ')
                     stats_file.write(str(mavg_battery) + ' ')
+                    stats_file.write(str(mavg_num_batteries) + ' ')
                     stats_file.write(str(mavg_food) + ' ')
                     stats_file.write(str(mavg_poison) + '\n')
 

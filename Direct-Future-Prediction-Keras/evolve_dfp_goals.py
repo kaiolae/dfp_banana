@@ -18,7 +18,8 @@ from collections import Counter
 #Some parameters
 BATTERY_REFILL_AMOUNT = BATTERY_CAPACITY = 100
 FITNESS_EVALS_PER_INDIVIDUAL = 5 #Multiple fitness evals per individual to counter effect of randomness.
-PENALTY_FOR_PICKING_BATTERY = 50
+PENALTY_FOR_PICKING_BATTERY = 100
+NUM_TIMESTEPS = 900
 #This is especially important, since the objective of seeking food directly gives very high variance, works great sometimes -
 #whereas seeking battery AND food gives stable and good behavior.
 
@@ -86,7 +87,7 @@ def eval_genomes(genomes, config):
         #Running the net N times, collecting averages.
         all_eval_results = []
         for i in range(FITNESS_EVALS_PER_INDIVIDUAL):
-            eval_result = evaluate_a_goal_vector([0,0,0], env, dfp_net, goal_producing_network=net, display=False, battery_refill_amount=BATTERY_REFILL_AMOUNT, battery_capacity=BATTERY_CAPACITY, penalty_for_picking=PENALTY_FOR_PICKING_BATTERY)
+            eval_result = evaluate_a_goal_vector([0,0,0], env, dfp_net , num_timesteps = NUM_TIMESTEPS, goal_producing_network=net, display=False, battery_refill_amount=BATTERY_REFILL_AMOUNT, battery_capacity=BATTERY_CAPACITY, penalty_for_picking=PENALTY_FOR_PICKING_BATTERY)
             avg_nn_outputs = np.mean(np.array(eval_result["goal_history"]), axis=0)
             eval_result["goal_history"] = avg_nn_outputs #Replacing the full history with the AVERAGE GOAL - that's all I'm using.
             all_eval_results.append(eval_result)
@@ -176,11 +177,19 @@ if __name__ == "__main__":
 
 
     global store_to_folder
-    store_to_folder = "sep27_five_fitnesstests_per_individual_run1_battery_penalty_" + str(PENALTY_FOR_PICKING_BATTERY) + "/"
+    store_to_folder = "oct8-evolving-agent-with-charge-output/"
     print("***************Storing results to folder ", store_to_folder, "*********************************")
     if not os.path.exists(store_to_folder):
         os.makedirs(store_to_folder)
 
+
+
+
+    if(len(sys.argv) > 0):
+        seed = int(sys.argv[1])
+    else:
+        seed = 1
+    Utilities.store_seed_to_folder(seed, store_to_folder, "evolve_dfp_goals")
     # Stores average NN outputs. TODO Here we should also somehow store the generation number. Look into if NEAT allows that.
     global avg_outputs_storage
     avg_outputs_storage = []
@@ -206,7 +215,7 @@ if __name__ == "__main__":
     #Flatten_branched gives us a onehot encoding of all 54 action combinations.
     print("Opening unity env")
     global env
-    env = UnityEnv("../unity_envs/kais_banana_with_battery_consumable_balanced", worker_id=6, use_visual=True, flatten_branched=True)
+    env = UnityEnv("../unity_envs/kais_banana_with_explicit_charge_decision_red_battery_900_timesteps", worker_id=14, use_visual=True, flatten_branched=True, seed=seed)
 
     measurement_size = 3
     timesteps = [1, 2, 4, 8, 16, 32]
@@ -223,7 +232,7 @@ if __name__ == "__main__":
     dfp_net = DFPAgent(state_size, measurement_size, action_size, timesteps)
     dfp_net.model = Networks.dfp_network(state_size, measurement_size, goal_size, action_size, len(timesteps), dfp_net.learning_rate)
 
-    loaded_model = "june27_battery_balanced1_agnostic_battery_limit_on/model/dfp.h5" #KOE: This was trained with real battery consequences. It seemed to learn battery seeking behavior better.
+    loaded_model = "oct7_explicitly_controlled_battery_charging_agnostic_battery_limit_on/model/dfp.h5"
     dfp_net.load_model(loaded_model)
     dfp_net.epsilon = dfp_net.final_epsilon
 

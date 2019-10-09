@@ -21,7 +21,7 @@ def store_individual_behavior(genome):
 
     net = neat.nn.FeedForwardNetwork.create(genome, config)
     num_steps_per_dimension = 20
-    measures_range = {"battery":(0,10),"foods" : (0,30), "poisons":(0,30)} #Battery is normalized. Normally, it ranges from 0 to 10, representing 0 to 100%.
+    measures_range = {"battery":(0,10),"foods" : (0,30), "poisons":(0,30)} #Battery is normalized. Normally, it ranges from 0 to 10, representing 0 to 100%. If battery is larger, e.g. size 30, range will change accordingly.
 
     measures_to_objectives_matrix = [] #Vector of vector where each element has form [m1, m2, m3, o1, o2, o3]
     col_headers = ["m_battery", "m_poisons", "m_food", "o_battery", "o_poisons", "o_foods"]
@@ -47,6 +47,15 @@ if __name__ == '__main__':
     analysis_mode = sys.argv[1]
 
     winner_filename = sys.argv[2] #Pickled winner indiv
+
+
+    if(len(sys.argv > 2)):
+        seed = int(sys.argv[3])
+    else:
+        seed = 1
+    Utilities.store_seed_to_folder(seed, store_to_folder, "post_evaluate_winner")
+
+
     with open(winner_filename, 'rb') as pickle_file:
         winner_genome = pickle.load(pickle_file)
 
