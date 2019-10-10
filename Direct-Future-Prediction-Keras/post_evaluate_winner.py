@@ -4,6 +4,7 @@ import neat
 import sys
 import numpy as np
 import time
+import Utilities
 
 #TODO: Waitimng a bith with this. When setting it up, I need a single method to set up interfaces to fitness func.
 #def store_individual_fitness(genome, doom_config_file):
@@ -49,11 +50,11 @@ if __name__ == '__main__':
     winner_filename = sys.argv[2] #Pickled winner indiv
 
 
-    if(len(sys.argv > 2)):
+    if(len(sys.argv) > 3):
         seed = int(sys.argv[3])
     else:
         seed = 1
-    Utilities.store_seed_to_folder(seed, store_to_folder, "post_evaluate_winner")
+    Utilities.store_seed_to_folder(seed, ".", "post_evaluate_winner")
 
 
     with open(winner_filename, 'rb') as pickle_file:

@@ -5,7 +5,7 @@ from display_trained_agent_behavior import evaluate_a_goal_vector, mask_unused_g
 
 import tensorflow as tf
 from keras import backend as K
-from gym_unity.envs.unity_env import UnityEnv
+from gym_unity.envs import UnityEnv
 from dfp import DFPAgent
 from networks import Networks
 import numpy as np
@@ -51,7 +51,7 @@ if __name__ == "__main__":
     winner_filename = sys.argv[1] #Pickled winner indiv
     store_to_folder = sys.argv[2]
 
-    if(len(sys.argv) > 2):
+    if(len(sys.argv) > 3):
         seed = int(sys.argv[3])
     else:
         seed = 1
@@ -85,7 +85,7 @@ if __name__ == "__main__":
     dfp_net = DFPAgent(state_size, measurement_size, action_size, timesteps)
     dfp_net.model = Networks.dfp_network(state_size, measurement_size, goal_size, action_size, len(timesteps), dfp_net.learning_rate)
 
-    loaded_model = "oct7_explicitly_controlled_battery_charging_agnostic_battery_limit_on/model/dfp.h5" #Learned dfp with infinite battery. june27_battery_balanced1_agnostic_battery_limit_on/model/dfp.h5" #KOE: This was trained with real battery consequences. It seemed to learn battery seeking behavior better.
+    loaded_model = "oct8_explicitly_controlled_battery_charging_agnostic/model/dfp.h5" #Learned dfp with infinite battery. june27_battery_balanced1_agnostic_battery_limit_on/model/dfp.h5" #KOE: This was trained with real battery consequences. It seemed to learn battery seeking behavior better.
     dfp_net.load_model(loaded_model)
     dfp_net.epsilon = dfp_net.final_epsilon
 

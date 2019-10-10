@@ -6,7 +6,7 @@ from display_trained_agent_behavior import evaluate_a_goal_vector, mask_unused_g
 
 import tensorflow as tf
 from keras import backend as K
-from gym_unity.envs.unity_env import UnityEnv
+from gym_unity.envs import UnityEnv
 from dfp import DFPAgent
 from networks import Networks
 import numpy as np
@@ -14,6 +14,8 @@ import neat
 import os
 import pickle
 from collections import Counter
+import sys
+import Utilities
 
 #Some parameters
 BATTERY_REFILL_AMOUNT = BATTERY_CAPACITY = 100
@@ -177,7 +179,7 @@ if __name__ == "__main__":
 
 
     global store_to_folder
-    store_to_folder = "oct8-evolving-agent-with-charge-output/"
+    store_to_folder = "oct9-evolving-agent-with-charge-output_2/"
     print("***************Storing results to folder ", store_to_folder, "*********************************")
     if not os.path.exists(store_to_folder):
         os.makedirs(store_to_folder)
@@ -215,7 +217,7 @@ if __name__ == "__main__":
     #Flatten_branched gives us a onehot encoding of all 54 action combinations.
     print("Opening unity env")
     global env
-    env = UnityEnv("../unity_envs/kais_banana_with_explicit_charge_decision_red_battery_900_timesteps", worker_id=14, use_visual=True, flatten_branched=True, seed=seed)
+    env = UnityEnv("../unity_envs/kais_banana_with_explicit_charge_decision_red_battery_900_timesteps", worker_id=15, use_visual=True, flatten_branched=True, seed=seed)
 
     measurement_size = 3
     timesteps = [1, 2, 4, 8, 16, 32]
@@ -232,7 +234,7 @@ if __name__ == "__main__":
     dfp_net = DFPAgent(state_size, measurement_size, action_size, timesteps)
     dfp_net.model = Networks.dfp_network(state_size, measurement_size, goal_size, action_size, len(timesteps), dfp_net.learning_rate)
 
-    loaded_model = "oct7_explicitly_controlled_battery_charging_agnostic_battery_limit_on/model/dfp.h5"
+    loaded_model = "oct8_explicitly_controlled_battery_charging_agnostic/model/dfp.h5"
     dfp_net.load_model(loaded_model)
     dfp_net.epsilon = dfp_net.final_epsilon
 

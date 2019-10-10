@@ -18,11 +18,22 @@ from networks import Networks
 from dfp import DFPAgent
 
 from Utilities import convert_action_id_to_name
+import gym
+from gym import wrappers
+from time import time
+#from gym_recording.wrappers import TraceRecordingWrapper
+import scipy.misc
+import pylab as plt
+import pickle
+import neat
 
-BATTERY_REFILL_AMOUNT = 300
-BATTERY_CAPACITY = 300
+import matplotlib.ticker as tick
+from scipy.interpolate import RegularGridInterpolator
+
+BATTERY_REFILL_AMOUNT = 100
+BATTERY_CAPACITY = 100
 PENALTY_FOR_PICKING = 100
-NUM_TIMESTEPS = 900
+NUM_TIMESTEPS = 300
 
 def preprocessImg(img, size):
     img = skimage.color.rgb2gray(img)
@@ -46,6 +57,76 @@ def mask_unused_gpus(leave_unmasked=1):
 
 
       #TODO: Consider loading experimental parameters, such as battery capacity, from file.
+
+
+##PARAMETERS FOR STORED FIGURES
+colors = ['blue', 'orange', 'green']
+plot_upper_x = 0
+plot_x_width = 100
+plot_upper_y = 0
+plot_y_width = 50
+
+bar_width = 15
+
+def convert_plotted_values_y_axis(plotted_objective_values):
+    # Converts the raw values we want to plot to fit inside the image frame.
+    converted_values = (1 - plotted_objective_values) + 1  # Since the y-axis in images is "upside down"
+    # Values now range fro 0 to 2, where 2 are those that were previously -1, and 0 are those that were previously 1.
+
+    # Stretching out the y-range.
+    converted_values = converted_values * plot_y_width
+    return converted_values
+
+
+def convert_plotted_values_x_axis(plotted_objective_values):
+    # Stretching out the y-range.
+    #First making 0 the minimum, then stretching out.
+    converted_values = (1+plotted_objective_values) * plot_x_width
+    return converted_values
+
+
+def regrid(data, out_x, out_y):
+    #Upscaling image.
+    m = max(data.shape[0], data.shape[1])
+    y = np.linspace(0, 1.0/m, data.shape[0])
+    x = np.linspace(0, 1.0/m, data.shape[1])
+    interpolating_function = RegularGridInterpolator((y, x), data)
+
+    yv, xv = np.meshgrid(np.linspace(0, 1.0/m, out_y), np.linspace(0, 1.0/m, out_x))
+
+    return interpolating_function((xv, yv))
+
+
+
+def superimpose_meas_and_objs_on_image(store_to_image, image, meas, objs):
+    #Consider first up-scaling the image.
+    meas_names = ["Batt_Level", "Num_Poisons", "Num_Foods"]
+    objs_names = ["Battery", "Poison", "Food"]
+
+    fig, ax = plt.subplots()
+    ax.imshow(image)
+    y_pos = [25, 55, 85] #TODO Generalize
+    objcounter = 0
+    for obj in objs_names:
+        ax.barh(y_pos[objcounter], convert_plotted_values_x_axis(objs[objcounter]), bar_width,
+                align='center', color=colors[objcounter],
+                ecolor='black')
+        objcounter +=1
+
+    ax.text(300,390,str(meas[0]), fontsize=40, color='blue')
+    ax.legend(objs_names, loc='upper right', fontsize=15)
+
+    plt.gca().set_axis_off()
+    plt.subplots_adjust(top=1, bottom=0, right=1, left=0,
+                        hspace=0, wspace=0)
+    plt.margins(0, 0)
+    plt.gca().xaxis.set_major_locator(tick.NullLocator())
+    plt.gca().yaxis.set_major_locator(tick.NullLocator())
+    plt.savefig(store_to_image, bbox_inches="tight", pad_inches=0)
+    plt.close(fig)
+
+
+
 def evaluate_a_goal_vector(goal_vector, env, dfp_network, num_timesteps = 300, display = True, battery_capacity = 100, timesteps = [1,2,4,8,16,32], goal_producing_network = None, stop_when_batt_empty = True, battery_refill_amount = 100,
                            penalty_for_picking=0, record_meas_and_objs=False):
     #Runs one "game" with a number of timesteps, displaying behavior or returning scores.
@@ -73,7 +154,6 @@ def evaluate_a_goal_vector(goal_vector, env, dfp_network, num_timesteps = 300, d
     # Goal
     goal = np.array(goal_vector * len(timesteps))
     inference_goal = goal
-    recorded_frames = []
     battery_picks = 0
 
     if record_meas_and_objs:
@@ -104,8 +184,6 @@ def evaluate_a_goal_vector(goal_vector, env, dfp_network, num_timesteps = 300, d
         else:
             dont_charge_count += 1
         observation, reward, done, info = env.step(action_idx)
-        if display:
-            recorded_frames.append(observation)
         if reward!=0:
             print("Got reward: ", reward)
         battery -= 1  # Always reducing by 1
@@ -163,12 +241,14 @@ def evaluate_a_goal_vector(goal_vector, env, dfp_network, num_timesteps = 300, d
                 meas_obs_file.write(str(current_goal_vec[2]) + '\n')
         s_t = s_t1
         #print("Timestep ", t)
+        #if display:
+        #    sleep(0.1) #To get real-time (not too fast) video
         if display:
-            sleep(0.1) #To get real-time (not too fast) video
-    if display:
-        recorded_frames=np.array(recorded_frames)
-        recorded_frames=recorded_frames.astype(np.uint8)
-        skvideo.io.vwrite("test_video.mp4", recorded_frames)
+            observation_array = np.array(observation)
+            observation_array = regrid(observation_array, 400, 400)
+            print("Reshaped observation: ", observation_array.shape)
+            superimpose_meas_and_objs_on_image('frames_for_video/'+str(t).zfill(3)+".png", observation_array, [battery, poison, food], current_goal_vec)
+
 
     print("Number of charge outputs: ", charge_count)
     print("Number of dont charge outputs: ", dont_charge_count)
@@ -180,6 +260,8 @@ def evaluate_a_goal_vector(goal_vector, env, dfp_network, num_timesteps = 300, d
 if __name__ == "__main__":
     mask_unused_gpus()
 
+    evo_winner = "oct9-evolving-agent-with-charge-output_1/winner_network.pickle"
+
     # Avoid Tensorflow eats up GPU memory
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
@@ -190,8 +272,10 @@ if __name__ == "__main__":
     #TODO Worker_id can be changed to run in parallell
     #Flatten_branched gives us a onehot encoding of all 54 action combinations.
     print("Opening unity env")
-    env = UnityEnv("../unity_envs/kais_banana_with_explicit_charge_decision_red_battery_900_timesteps", worker_id=3, use_visual=True, flatten_branched=True, seed=3) #TODO: Add seed input if I want.
-
+    env = UnityEnv("../unity_envs/kais_banana_with_explicit_charge_decision_red_battery_900_timesteps", worker_id=31, use_visual=True, flatten_branched=True, seed=5) #TODO: Add seed input if I want.
+    #env = TraceRecordingWrapper(env)
+    #env.recording = "test_openai_recording/"
+    #env = gym.wrappers.Monitor(env, "./vid", video_callable=lambda episode_id: True, force=True) KOE: I think this wrapper may not be working with Unity ML agents.
 
     print("env setup done")
     measurement_size = 3
@@ -212,8 +296,18 @@ if __name__ == "__main__":
     dfp_net.load_model(loaded_model)
     dfp_net.epsilon = dfp_net.final_epsilon
 
+    with open(evo_winner, 'rb') as pickle_file:
+        winner_genome = pickle.load(pickle_file)
 
-    evaluate_a_goal_vector([-1,-1,1], env, dfp_net, display=False, num_timesteps=NUM_TIMESTEPS, battery_refill_amount=BATTERY_REFILL_AMOUNT, battery_capacity=BATTERY_CAPACITY, penalty_for_picking=PENALTY_FOR_PICKING)
+    config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
+                         neat.DefaultSpeciesSet, neat.DefaultStagnation,
+                         "config")
+
+    goal_net = neat.nn.FeedForwardNetwork.create(winner_genome, config)
+
+
+    evaluate_a_goal_vector([1,-1,1], env, dfp_net, display=True, num_timesteps=NUM_TIMESTEPS, battery_refill_amount=BATTERY_REFILL_AMOUNT, battery_capacity=BATTERY_CAPACITY, penalty_for_picking=PENALTY_FOR_PICKING,
+                           goal_producing_network=goal_net)
 
     env.close()
 

@@ -41,7 +41,7 @@ if __name__ == "__main__":
     store_to_folder = sys.argv[2]
 
 
-    if(len(sys.argv) > 2):
+    if(len(sys.argv) > 3):
         seed = int(sys.argv[3])
     else:
         seed = 1
